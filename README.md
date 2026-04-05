@@ -59,6 +59,8 @@ cd your-project
 npx @movp/cli init --codex
 ```
 
+> **Homebrew users**: use `movp init`, `movp init --cursor`, or `movp init --codex` instead of `npx @movp/cli init`.
+
 This sets up the MCP server connection and telemetry hooks. You'll be prompted to log in on first run.
 
 ---
@@ -83,7 +85,7 @@ cursor --plugin-dir ~/.movp/plugins/cursor-plugin
 codex --plugin-dir ~/.movp/plugins/codex-plugin
 ```
 
-> **Homebrew users**: replace `~/.movp/plugins` with `$(brew --prefix)/share/movp`.
+> **Homebrew users**: use `movp claude`, `movp cursor`, or `movp codex` instead of the `--plugin-dir` flags above.
 
 ---
 
