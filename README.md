@@ -131,13 +131,25 @@ Most users run `npx @movp/cli init` which writes MCP config automatically. The `
 
 ### Overlap with `@movp/cli init`
 
-`init` writes `.claude/rules/movp-review.md`; the plugin ships a `movp-review` skill with the same content. **If using the plugin, delete the CLI-written rule** to avoid duplicate behavior:
+`init` writes a `movp-review` rule file; the plugin ships a `movp-review` skill with the same content. Pass `--no-rules` to skip writing the rule — the plugin skill takes over:
 
 ```bash
-rm .claude/rules/movp-review.md
+# Claude Code
+npx @movp/cli init --no-rules
+
+# Cursor
+npx @movp/cli init --cursor --no-rules
+
+# Codex (no rule file is written, so --no-rules has no effect — safe to pass anyway)
+npx @movp/cli init --codex --no-rules
 ```
 
-Similarly, `init --cursor` writes `.cursor/rules/movp-review.mdc`. Delete it if you're using the Cursor plugin.
+If you already ran `init` without `--no-rules`, delete the rule manually:
+
+```bash
+rm .claude/rules/movp-review.md          # Claude Code
+rm .cursor/rules/movp-review.mdc         # Cursor
+```
 
 ### Skills not firing?
 
