@@ -181,28 +181,6 @@ Most users run `npx @movp/cli init` which writes MCP config automatically. The `
 
 `init` writes `mcpServers.movp` into `.claude/settings.json` (Claude Code), `.cursor/mcp.json` (Cursor), or `codex.yaml` (Codex). If you also create `.mcp.json` in the plugin root, you will have two `movp` server registrations. Use one mechanism — `init` for project setup (recommended) or plugin `.mcp.json` for standalone plugin installs — not both.
 
-### Overlap with `@movp/cli init`
-
-`init` writes a `movp-review` rule file; the plugin ships a `movp-review` skill with the same content. Pass `--no-rules` to skip writing the rule — the plugin skill takes over:
-
-```bash
-# Claude Code
-npx @movp/cli init --no-rules
-
-# Cursor
-npx @movp/cli init --cursor --no-rules
-
-# Codex (no rule file is written, so --no-rules has no effect — safe to pass anyway)
-npx @movp/cli init --codex --no-rules
-```
-
-If you already ran `init` without `--no-rules`, delete the rule manually:
-
-```bash
-rm .claude/rules/movp-review.md          # Claude Code
-rm .cursor/rules/movp-review.mdc         # Cursor
-```
-
 ### Skills not firing?
 
 Skills rely on the model matching their `description` field. If `movp-control-plane` doesn't activate at session start, copy the SKILL.md body into your project's always-on rules as a fallback:
