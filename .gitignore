@@ -1,7 +1,11 @@
 .claude/settings.local.json
 .claude/settings.json
+.claude/scheduled_tasks.lock
 .movp/config.local.yaml
 .env.movp
 # Plugin .mcp.json files contain credentials — only .mcp.json.example is committed
 */.mcp.json
 .DS_Store
+
+# Local git worktrees
+.worktrees/
