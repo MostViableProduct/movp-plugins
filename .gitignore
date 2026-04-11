@@ -9,3 +9,7 @@
 
 # Local git worktrees
 .worktrees/
+
+# npm pack artifacts
+*.tgz
+package/
