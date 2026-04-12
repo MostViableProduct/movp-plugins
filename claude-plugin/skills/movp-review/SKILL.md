@@ -45,6 +45,8 @@ Format findings as structured output with severity badges. After showing finding
 
 > **Reply with:** implement fixes, dismiss (false positive / not applicable / deferred), or accept as-is
 
+> **Full review loop:** Use `/movp:review` for an interactive multi-round loop where findings are implemented between rounds and the score tracked to 9.0.
+
 ## Resolve actions
 
 | Developer says | Action to call | Notes |
@@ -56,4 +58,4 @@ Format findings as structured output with severity badges. After showing finding
 
 ## Rate and cost awareness
 
-Reviews consume LLM budget. Do not trigger multiple reviews in a single session for the same artifact. If `trigger_review` returns a rate limit error (429), inform the developer and do not retry automatically.
+Reviews consume LLM budget. Do not trigger multiple reviews in a single session for the same artifact. If `trigger_review` returns a rate limit error (429), inform the developer and do not retry automatically. For multi-round loop behavior, see the `/movp:review` command.

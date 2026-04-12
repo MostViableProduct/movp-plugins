@@ -2,29 +2,25 @@ version: 1
 review:
   enabled: true
   categories:
-    # Default 8 categories — all scored 1-10 by the adversarial model.
+    # Default 6 categories — all scored 1-10 by the adversarial model.
     # All weights are equal by default. Increase a weight to emphasize a category.
-    # Weights must be positive integers >= 1.
-    - name: security
-      weight: 1
+    # Weights must be positive numbers >= 1.0 (decimals supported).
     - name: correctness
-      weight: 1
+      weight: 1.25
     - name: performance
-      weight: 1
-    - name: stability
-      weight: 1
-    - name: ux_drift
-      weight: 1
-    - name: outcome_drift
-      weight: 1
-    - name: missing_tests
-      weight: 1
-    - name: scope_creep
-      weight: 1
+      weight: 1.0
+    - name: reliability
+      weight: 1.0
+    - name: safety
+      weight: 1.5
+    - name: simplicity
+      weight: 1.0
+    - name: usability
+      weight: 1.0
     # Add custom categories:
     # - name: accessibility
     #   description: WCAG 2.1 AA compliance
-    #   weight: 1
+    #   weight: 1.0
   auto_review:
     plan_files: true    # auto-trigger review after writing plan files
     code_output: false  # auto-trigger review after significant code output

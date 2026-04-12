@@ -23,14 +23,12 @@ Format the output as:
     Overall alignment:  <alignment>/10
     
     Category breakdown:
-      security:       <n>/10
-      correctness:    <n>/10
-      performance:    <n>/10
-      stability:      <n>/10
-      ux_drift:       <n>/10
-      outcome_drift:  <n>/10
-      missing_tests:  <n>/10
-      scope_creep:    <n>/10
+      correctness:   <n>/10
+      performance:   <n>/10
+      reliability:   <n>/10
+      safety:        <n>/10
+      simplicity:    <n>/10
+      usability:     <n>/10
 
   Findings (<total>)
     Critical: <n>   High: <n>   Medium: <n>   Low: <n>
