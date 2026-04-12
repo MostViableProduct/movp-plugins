@@ -57,6 +57,10 @@ Category Scores:
 
 Findings (<total>):
 
+[CRIT] <category> (<confidence>)
+  <summary> — <file_path>:<line_number>
+  Fix: <suggested_fix>
+
 [HIGH] <category> (<confidence>)
   <summary> — <file_path>:<line_number>
   Fix: <suggested_fix>
@@ -72,7 +76,7 @@ On round 1 (previous_score is null), show "Initial score: X/10" instead of a del
 
 ### 2d — Auto-stop check
 
-If `current_score >= 9.0` AND there are no CRITICAL or HIGH severity findings:
+If `current_score >= 9.0` AND there are no `[CRIT]` or `[HIGH]` findings:
 → Show:
 ```
 [MoVP] Score threshold reached (9.0). Loop complete.
@@ -101,6 +105,12 @@ Changes made this round:
 If no files could be changed (e.g. read-only, artifact was plan text), note which fixes were skipped.
 
 If the artifact is a plan file and you modified it, re-read it from disk before the next round. Pass the updated file content as `content` in the next `trigger_review` call.
+
+### 2e-guard — No-op check
+
+If no changes were made this round (fixes could not be applied or no actionable findings):
+  → Show: "No changes applied this round. Stopping loop to avoid a no-op re-review."
+  → Proceed to Step 3 (post-loop).
 
 ### 2f — Ask to continue
 
