@@ -16,6 +16,14 @@ Look at the most recent significant output in this conversation:
 
 Set `round = 1`, `previous_score = null`.
 
+Read `.movp/config.yaml` if it exists in the project and extract `review.max_rounds`; if the file is absent or the key is not set, use `max_rounds = 3`.
+
+Track these variables across the loop:
+- `round` (integer, starts at 1)
+- `previous_score` (float | null, starts as null)
+- `current_score` (float | null, set each round from the review text)
+- `total_cost` (float, accumulated across rounds, starts at 0)
+
 Repeat until auto-stopped or operator stops:
 
 ### 2a — Trigger review
@@ -31,7 +39,7 @@ Note the `review_id` returned.
 
 Call `get_review_status(review_id=<id>)` every few seconds until `review_status` is "completed" or "error".
 
-If `review_status` is "error": stop the loop, show the error, and call `resolve_review(review_id=<id>, action="retry")`. If retry is unavailable, re-run the command.
+If `review_status` is "error": stop the loop, show the error, and call `resolve_review(review_id=<id>, action="retry")`. If retry is unavailable, restart from step 2a for the current round (preserving `round` and `previous_score`).
 
 ### 2c — Present results
 
@@ -58,7 +66,7 @@ Findings (<total>):
 [LOW] ...
 ```
 
-Parse `Quality: <number>/10` from the `get_review_status` text to extract the score. Store it as `current_score`.
+Parse `Quality: <number>/10` from the `get_review_status` text to extract the score. Store it as `current_score`. Add the round's cost to `total_cost`.
 
 On round 1 (previous_score is null), show "Initial score: X/10" instead of a delta.
 
@@ -68,7 +76,7 @@ If `current_score >= 9.0` AND there are no CRITICAL or HIGH severity findings:
 → Show:
 ```
 [MoVP] Score threshold reached (9.0). Loop complete.
-  Final score: <X>/10  Rounds: <N>  Total cost: $<Z>
+  Final score: <X>/10  Rounds: <N>  Total cost: $<total_cost>
 ```
 → Proceed to Step 3.
 
@@ -92,6 +100,8 @@ Changes made this round:
 
 If no files could be changed (e.g. read-only, artifact was plan text), note which fixes were skipped.
 
+If the artifact is a plan file and you modified it, re-read it from disk before the next round. Pass the updated file content as `content` in the next `trigger_review` call.
+
 ### 2f — Ask to continue
 
 Ask:
@@ -106,3 +116,7 @@ Ask:
 
 Ask:
 > **Continue with implementation, or something else?**
+
+Based on the operator's reply:
+- "implement" / "continue" / "proceed" → begin implementing the reviewed artifact (code the plan, or continue with next development steps)
+- "stop" / "done" / "exit" or any other response → confirm: "Understood. Review complete. Score: <final_score>/10 after <N> rounds."
