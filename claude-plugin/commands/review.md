@@ -1,7 +1,7 @@
 ---
-description: "Run an adversarial review of the most recent artifact"
+description: "Run an adversarial review loop of the most recent artifact"
 ---
-Run an adversarial review of the most recent artifact in this session. Follow these steps exactly:
+Run an adversarial review loop. You will trigger a review, implement all findings, then re-review until the score reaches 9.0 or the operator stops. Track `previous_score` and `round` across iterations.
 
 **Step 1 — Identify the artifact**
 
@@ -10,30 +10,42 @@ Look at the most recent significant output in this conversation:
 - If significant code was just written (new feature, multi-file change, migration): use artifact_type="code_output" with the code
 - If neither, ask the user what to review before proceeding
 
-**Step 2 — Trigger the review**
+---
+
+**Step 2 — Begin the review loop**
+
+Set `round = 1`, `previous_score = null`.
+
+Repeat until auto-stopped or operator stops:
+
+### 2a — Trigger review
 
 Call `trigger_review` with:
 - `artifact_type`: "plan_file" or "code_output"
-- `content`: the artifact text (or `file_path` if the artifact is a local file)
-- `session_id`: the current session ID if available
+- `content`: the current artifact text (updated after each round with any fixes applied)
+- `session_id`: current session ID if available
 
 Note the `review_id` returned.
 
-**Step 3 — Poll for completion**
+### 2b — Poll for completion
 
 Call `get_review_status(review_id=<id>)` every few seconds until `review_status` is "completed" or "error".
-Always use the `review_id` from Step 2.
 
-**Step 4 — Present findings**
+If `review_status` is "error": stop the loop, show the error, and call `resolve_review(review_id=<id>, action="retry")`. If retry is unavailable, re-run the command.
 
-Format findings as:
+### 2c — Present results
+
+Format output as:
 
 ```
-[MoVP] Review  rev_<id>  Quality: <X>/10  Alignment: <Y>/10  Cost: $<Z>
+[MoVP] Review Loop — Round <N>
+
+Score: <X>/10  <if round > 1: "(was <previous_score>/10)">
+Cost: $<Z>
 
 Category Scores:
-  security: <n>  correctness: <n>  performance: <n>  stability: <n>
-  ux_drift: <n>  outcome_drift: <n>  missing_tests: <n>  scope_creep: <n>
+  correctness: <n>  performance: <n>  reliability: <n>
+  safety: <n>       simplicity: <n>   usability: <n>
 
 Findings (<total>):
 
@@ -46,19 +58,51 @@ Findings (<total>):
 [LOW] ...
 ```
 
-If review_status is "error", show the error and offer to retry.
+Parse `Quality: <number>/10` from the `get_review_status` text to extract the score. Store it as `current_score`.
 
-**Step 5 — Ask for resolution**
+On round 1 (previous_score is null), show "Initial score: X/10" instead of a delta.
 
-After presenting findings, always ask:
+### 2d — Auto-stop check
 
-> **Reply with:** implement fixes, dismiss (false positive / not applicable / deferred), accept as-is, or retry
+If `current_score >= 9.0` AND there are no CRITICAL or HIGH severity findings:
+→ Show:
+```
+[MoVP] Score threshold reached (9.0). Loop complete.
+  Final score: <X>/10  Rounds: <N>  Total cost: $<Z>
+```
+→ Proceed to Step 3.
 
-**Step 6 — Resolve**
+If `current_score == previous_score` and round > 1:
+→ Note: "Score unchanged from previous round (<X>/10). Fixes may not be landing — review findings carefully."
 
-Based on the developer's reply:
-- "implement fixes" → work on the fixes, then call `resolve_review(review_id=<id>, action="accept")` when done
-- "accept" / "looks good" / "ship it" → call `resolve_review(review_id=<id>, action="accept")`
-- "dismiss" / "false positive" / "not applicable" → call `resolve_review(review_id=<id>, action="dismiss", reason="false_positive"|"not_applicable"|"deferred")`
-- "escalate" / "create a ticket" → call `resolve_review(review_id=<id>, action="escalate", target="todo")`
-- "retry" → call `resolve_review(review_id=<id>, action="retry")` — only valid when review_status is "error"
+If round >= max_rounds (from .movp/config.yaml, default 3):
+→ Show: "Max review rounds reached (<N>). Last score: <X>/10."
+→ Proceed to Step 3.
+
+### 2e — Implement fixes
+
+Without asking the operator, implement all CRITICAL and HIGH severity findings. Use judgment on MED and LOW.
+
+After implementing, show a file-level summary:
+```
+Changes made this round:
+  - Modified: <file1>, <file2> (brief description of fix)
+  - ...
+```
+
+If no files could be changed (e.g. read-only, artifact was plan text), note which fixes were skipped.
+
+### 2f — Ask to continue
+
+Ask:
+> **Continue to next review round, or stop?**
+
+- "continue" → set `previous_score = current_score`, increment `round`, go to 2a with updated artifact
+- "stop" → proceed to Step 3
+
+---
+
+**Step 3 — Post-loop**
+
+Ask:
+> **Continue with implementation, or something else?**
