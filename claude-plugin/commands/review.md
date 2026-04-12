@@ -93,7 +93,7 @@ If round >= max_rounds (from .movp/config.yaml, default 3):
 
 ### 2e — Implement fixes
 
-Without asking the operator, implement all CRITICAL and HIGH severity findings. Use judgment on MED and LOW.
+Without asking the operator, implement all critical and high severity findings (shown as `[CRIT]` / `[HIGH]` in tool output). Use judgment on medium and low (`[MED]` / `[LOW]`).
 
 After implementing, show a file-level summary:
 ```
@@ -111,6 +111,8 @@ If the artifact is a plan file and you modified it, re-read it from disk before 
 If no changes were made this round (fixes could not be applied or no actionable findings):
   → Show: "No changes applied this round. Stopping loop to avoid a no-op re-review."
   → Proceed to Step 3 (post-loop).
+
+Note: if only `[MED]`/`[LOW]` findings were skipped by judgment and nothing was modified, this guard still fires — stopping is intentional to avoid re-reviewing unchanged content.
 
 ### 2f — Ask to continue
 
