@@ -16,14 +16,15 @@
 
 ### Created
 - `big-wave/packages/cli/lib/project-config.js` — canonical `ensureProjectConfig(root, { log })` + `DEFAULT_PROJECT_CONFIG` + `DEFAULT_LOCAL_CONFIG` constants
-- `big-wave/packages/cli/test/project-config.test.js` — golden-fixture contract tests for `ensureProjectConfig` (shared with MCP)
-- `big-wave/packages/mcp-server/test/mcp-server.test.js` — root resolution tests + re-run of golden fixtures against inlined copy
+- `big-wave/packages/cli/test/project-config.test.js` — golden-fixture contract tests + exports shared `runGoldenFixtures` helper
+- `big-wave/packages/mcp-server/lib/project-root.js` — MCP-side `ensureProjectConfig` + `findGitRoot` + `validateProjectRoot` + `DEFAULT_PROJECT_CONFIG`
+- `big-wave/packages/mcp-server/test/mcp-server.test.js` — imports `lib/project-root.js` directly + runs shared golden fixtures (CI parity) + root resolution tests
 
 ### Modified
 - `big-wave/packages/cli/lib/helpers.js` — add `extraKnownMarketplaces` + `enabledPlugins` merge handling in `mergeJsonConfig`
-- `big-wave/packages/cli/bin/cli.js` — rewrite `runInit`, add `registerMarketplace` + `migrateProjectScoped`, remove `--no-rules`, update help text + top comment
+- `big-wave/packages/cli/bin/cli.js` — rewrite `runInit`, add `registerMarketplace` + `migrateProjectScoped`, add `--channel=dev` gate, remove `--no-rules`, update help text + top comment
 - `big-wave/packages/cli/test/cli.test.js` — add tests for new merge keys, `registerMarketplace`, `migrateProjectScoped`
-- `big-wave/packages/mcp-server/index.js` — add inlined `ensureProjectConfig` + root resolution + lazy config check per request
+- `big-wave/packages/mcp-server/index.js` — `require("./lib/project-root")`; no inline copy; add lazy config check per request
 - `mona-lisa/claude-plugin/commands/status.md` — update fallback messaging
 
 ---
@@ -997,7 +998,10 @@ git commit -m "feat(cli): rewrite runInit as 2-step global setup — remove proj
 
 ## Task 6: MCP server — project root resolution + lazy config creation
 
+**Architecture note:** The previous approach used `test-helpers.js` (a test-only copy of `ensureProjectConfig`) plus an inline copy in `index.js`. This created three sources of truth with no CI enforcement of parity. This task instead creates `packages/mcp-server/lib/project-root.js` as a first-class module. Both `index.js` and the test file require it directly. CI runs the shared golden-fixture suite against it, proving parity with the CLI module without sync comments.
+
 **Files:**
+- Create: `big-wave/packages/mcp-server/lib/project-root.js`
 - Modify: `big-wave/packages/mcp-server/index.js`
 - Create: `big-wave/packages/mcp-server/test/mcp-server.test.js`
 
@@ -1016,16 +1020,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// ─── Helper: extract testable functions from index.js ────────────────────────
-// index.js is not a module — it starts the server at load time.
-// We pull the pure functions out for testing by reading + eval'ing the relevant
-// section, OR we duplicate the logic here for contract testing.
-//
-// For golden fixtures, we test the INLINED ensureProjectConfig directly.
-// For root resolution, we test findGitRoot + validateProjectRoot helpers.
-//
-// These are extracted by re-requiring a test-only export added to index.js.
-const { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG } = require("../test-helpers");
+// All testable functions are exported from lib/project-root.js.
+// index.js requires the same module at runtime — no duplicate copies.
+const { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG } = require("../lib/project-root");
 
 function makeTmpGitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "movp-mcp-test-"));
@@ -1159,18 +1156,20 @@ mkdir -p test
 node --test test/mcp-server.test.js 2>&1 | head -20
 ```
 
-Expected: `Cannot find module '../test-helpers'`
+Expected: `Cannot find module '../lib/project-root'`
 
-- [ ] **Step 6.3: Create `big-wave/packages/mcp-server/test-helpers.js`**
+- [ ] **Step 6.3: Create `big-wave/packages/mcp-server/lib/project-root.js`**
 
-This file exports the pure functions that will be added to `index.js`, allowing them to be tested without starting the server.
+This is a first-class module — not a test helper. It is required by both `index.js` at runtime and `test/mcp-server.test.js` in tests. There is no `test-helpers.js` and no inline copy in `index.js`.
 
-**Note:** The contract tests here verify the `test-helpers.js` copy of `ensureProjectConfig`, not the inlined copy in `index.js` directly. `index.js` parity is enforced by code review + the sync comment, not CI.
+**CI parity:** The shared `runGoldenFixtures` helper (from `packages/cli/test/project-config.test.js`) is run against this module. If the golden fixtures pass both the CLI module and this module, parity is proved by CI — not sync comments.
 
 ```js
 "use strict";
-// test-helpers.js — exports pure functions from index.js for unit testing.
-// Not required at runtime; only used by test/mcp-server.test.js.
+// packages/mcp-server/lib/project-root.js
+// Project root resolution + lazy config creation for the MCP server.
+// Required at runtime by index.js and in tests by test/mcp-server.test.js.
+// No dependency on packages/cli — keep this package independent.
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -1337,7 +1336,7 @@ function validateProjectRoot(override) {
   return resolved;
 }
 
-module.exports = { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG };
+module.exports = { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG, DEFAULT_LOCAL_CONFIG };
 ```
 
 - [ ] **Step 6.4: Run tests — should pass**
@@ -1349,197 +1348,32 @@ node --test test/mcp-server.test.js
 
 Expected: all tests pass (the `findGitRoot` null test may vary by environment — that's acceptable).
 
-- [ ] **Step 6.5: Add the same functions + lazy check to `index.js`**
+- [ ] **Step 6.5: Wire `lib/project-root.js` into `index.js` + add lazy config check**
 
-In `big-wave/packages/mcp-server/index.js`:
+`index.js` must not inline any of the project-root functions. Instead:
 
-1. Add to the top-level `require` block (near the existing `fs`/`path`/`os` requires):
+1. Add to the top-level `require` block in `big-wave/packages/mcp-server/index.js`:
 
 ```js
-const { execFileSync } = require("child_process");
+const { ensureProjectConfig, findGitRoot, validateProjectRoot } = require("./lib/project-root");
 ```
 
-2. After the `frontendBase` constant (around line 70), add:
+2. After the `frontendBase` constant (around line 70), add only the startup validation and the one-time warning flag:
 
 ```js
-// ─── Project root resolution + lazy config ────────────────────────────────────
-
-// ensureProjectConfig — keep in sync with packages/cli/lib/project-config.js
-// Last synced: v1.0.7
-// IMPORTANT: this string must be byte-for-byte identical to DEFAULT_PROJECT_CONFIG
-// in packages/cli/lib/project-config.js. The contract tests enforce this.
-const DEFAULT_PROJECT_CONFIG = `version: 1
-review:
-  enabled: true
-  categories:
-    # Default 8 categories — all scored 1-10 by the adversarial model.
-    # All weights are equal by default. Increase a weight to emphasize a category.
-    # Weights must be positive integers >= 1.
-    - name: security
-      weight: 1
-    - name: correctness
-      weight: 1
-    - name: performance
-      weight: 1
-    - name: stability
-      weight: 1
-    - name: ux_drift
-      weight: 1
-    - name: outcome_drift
-      weight: 1
-    - name: missing_tests
-      weight: 1
-    - name: scope_creep
-      weight: 1
-    # Add custom categories:
-    # - name: accessibility
-    #   description: WCAG 2.1 AA compliance
-    #   weight: 1
-  auto_review:
-    plan_files: true    # auto-trigger review after writing plan files
-    code_output: false  # auto-trigger review after significant code output
-  cost_cap_daily_usd: 5.0
-  max_rounds: 3
-  # rule_apply_mode: "direct"  # "direct" = write rules on confirm; "pr" = create branch + PR
-control_plane:
-  health_check_interval: 20  # seconds between health checks
-  show_cost: true
-  show_recommendations: true
-`;
-
-const DEFAULT_LOCAL_CONFIG = `# .movp/config.local.yaml — personal overrides (gitignored)
-# Overrides .movp/config.yaml for your local environment only.
-# Example:
-# review:
-#   enabled: false
-`;
-
-function parseDefaultSections(yamlText) {
-  const lines = yamlText.split("\n");
-  const sections = [];
-  let current = null;
-  for (const line of lines) {
-    const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
-    if (m) {
-      if (current) sections.push(current);
-      current = { key: m[1], lines: [line] };
-    } else if (current) {
-      current.lines.push(line);
-    }
-  }
-  if (current) sections.push(current);
-  return sections.map(s => ({ key: s.key, text: s.lines.join("\n") }));
-}
-
-function sectionExists(existingText, key) {
-  return new RegExp("^" + key + ":", "m").test(existingText);
-}
-
-function mcpEnsureProjectConfig(root) {
-  const movpDir = path.join(root, ".movp");
-  try {
-    fs.mkdirSync(movpDir, { recursive: true });
-
-    const configPath = path.join(movpDir, "config.yaml");
-    if (!fs.existsSync(configPath)) {
-      fs.writeFileSync(configPath, DEFAULT_PROJECT_CONFIG);
-      process.stderr.write("[movp-mcp] Created " + configPath + " with defaults\n");
-    } else {
-      const existing = fs.readFileSync(configPath, "utf8");
-      const defaultSections = parseDefaultSections(DEFAULT_PROJECT_CONFIG);
-      const added = [];
-      for (const section of defaultSections) {
-        if (!sectionExists(existing, section.key)) {
-          fs.appendFileSync(configPath, "\n# Added by MoVP — new in schema\n" + section.text, "utf8");
-          added.push(section.key);
-        }
-      }
-      if (added.length > 0) {
-        process.stderr.write("[movp-mcp] Updated " + configPath + " — added sections: " + added.join(", ") + "\n");
-      }
-    }
-
-    const localConfigPath = path.join(movpDir, "config.local.yaml");
-    const detectedFrontendUrl = process.env.MOVP_FRONTEND_URL || stored.MOVP_FRONTEND_URL || "https://host.mostviableproduct.com";
-    const frontendUrlLine = `\n# Frontend URL — used by the MCP server to construct settings links\nMOVP_FRONTEND_URL: "${detectedFrontendUrl}"\n`;
-    if (!fs.existsSync(localConfigPath)) {
-      fs.writeFileSync(localConfigPath, DEFAULT_LOCAL_CONFIG + frontendUrlLine);
-    } else {
-      const existingLocal = fs.readFileSync(localConfigPath, "utf8");
-      if (!existingLocal.includes("MOVP_FRONTEND_URL")) {
-        fs.appendFileSync(localConfigPath, frontendUrlLine);
-      }
-    }
-
-    const gitignorePath = path.join(root, ".gitignore");
-    const gitignoreEntry = ".movp/config.local.yaml";
-    let gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
-    if (!gitignore.includes(gitignoreEntry)) {
-      fs.appendFileSync(gitignorePath, "\n# MoVP local config\n" + gitignoreEntry + "\n.env.movp\n*.bak\n");
-    }
-  } catch (e) {
-    process.stderr.write("[movp-mcp] Warning: could not create .movp/config.yaml: " + e.message + "\n");
-    process.stderr.write("[movp-mcp] To fix: check directory permissions, or set MOVP_PROJECT_ROOT to a writable project directory.\n");
-  }
-}
-
-function findGitRoot(startDir) {
-  // Primary: git rev-parse (handles worktrees, submodules, non-standard layouts)
-  try {
-    const result = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: startDir,
-      timeout: 500,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return result.trim();
-  } catch {
-    // Fall through to existsSync walk (git not on PATH, or not a git repo)
-  }
-  // Fallback: existsSync walk
-  const home = os.homedir();
-  let dir = path.resolve(startDir);
-  while (true) {
-    if (fs.existsSync(path.join(dir, ".git"))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir || dir === home) return null;
-    dir = parent;
-  }
-}
-
-// Note: findGitRoot is defined inline above in the lazy config block,
-// identical to test-helpers.js. Keep in sync.
-
-// Validate MOVP_PROJECT_ROOT at startup — fail fast if set but invalid.
-// Per-request: root = validatedOverrideRoot || findGitRoot(process.cwd())
+// ─── Startup: validate MOVP_PROJECT_ROOT if set ───────────────────────────────
+// findGitRoot, validateProjectRoot, ensureProjectConfig are all from lib/project-root.js
 let validatedOverrideRoot = null;
 const rootOverride = process.env.MOVP_PROJECT_ROOT;
 if (rootOverride) {
-  if (!path.isAbsolute(rootOverride)) {
-    process.stderr.write("[movp-mcp] MOVP_PROJECT_ROOT is invalid: \"" + rootOverride + "\" is not an absolute path.\n");
-    process.exit(1);
-  }
-  let resolved;
-  try { resolved = fs.realpathSync(rootOverride); } catch {
-    process.stderr.write("[movp-mcp] MOVP_PROJECT_ROOT is invalid: \"" + rootOverride + "\" does not exist.\n");
-    process.exit(1);
-  }
   try {
-    if (!fs.statSync(resolved).isDirectory()) {
-      process.stderr.write("[movp-mcp] MOVP_PROJECT_ROOT is invalid: \"" + rootOverride + "\" is not a directory.\n");
-      process.exit(1);
-    }
-  } catch {
-    process.stderr.write("[movp-mcp] MOVP_PROJECT_ROOT is invalid: \"" + rootOverride + "\" — must be an existing directory.\n");
+    validatedOverrideRoot = validateProjectRoot(rootOverride);
+  } catch (e) {
+    process.stderr.write("[movp-mcp] " + e.message + "\n");
     process.exit(1);
   }
-  validatedOverrideRoot = resolved;
 }
-```
 
-Add at module scope (after the `validatedOverrideRoot` block, before `rl.on`):
-
-```js
 // Suppress repeated "no root" warnings — log once per server run.
 let noRootWarningLogged = false;
 ```
@@ -1551,7 +1385,12 @@ rl.on("line", async (line) => {
   // Lazy project config — resolve root per request, create .movp/config.yaml if missing
   const root = validatedOverrideRoot || findGitRoot(process.cwd());
   if (root && !fs.existsSync(path.join(root, ".movp", "config.yaml"))) {
-    mcpEnsureProjectConfig(root);
+    try {
+      ensureProjectConfig(root, { log: (msg) => process.stderr.write("[movp-mcp] " + msg + "\n") });
+    } catch (e) {
+      process.stderr.write("[movp-mcp] Warning: could not create .movp/config.yaml: " + e.message + "\n");
+      process.stderr.write("[movp-mcp] To fix: check directory permissions, or set MOVP_PROJECT_ROOT to a writable project directory.\n");
+    }
   } else if (!root && !noRootWarningLogged) {
     noRootWarningLogged = true;
     process.stderr.write("[movp-mcp] Could not determine project root — skipping .movp/config.yaml creation.\n");
@@ -1579,7 +1418,7 @@ Expected: all tests pass.
 
 ```bash
 cd /path/to/big-wave
-git add packages/mcp-server/index.js packages/mcp-server/test-helpers.js packages/mcp-server/test/mcp-server.test.js
+git add packages/mcp-server/lib/project-root.js packages/mcp-server/index.js packages/mcp-server/test/mcp-server.test.js
 git commit -m "feat(mcp-server): add lazy .movp/config.yaml creation with project root resolution"
 ```
 
@@ -1704,29 +1543,28 @@ node bin/cli.js init --channel=dev
 
 - [ ] **Step 8.7: BFF contract test — no `.movp/config.yaml` present**
 
-This step must be run against a real BFF instance (staging or local). It documents and locks down the BFF response shape when no config file exists.
+The BFF **must** return one of two documented responses when no config exists:
+- **Option A:** HTTP 200 with `{ "config_source": "defaults", ... }` (serves defaults)
+- **Option B:** HTTP 422 (or similar) with `{ "error": "config_missing", ... }` (structured error)
+
+HTTP 500 or unstructured errors are BFF bugs that must be fixed before shipping.
+
+Run against staging to discover which option is implemented:
 
 ```bash
-# Delete .movp/config.yaml from smoke-test repo
 rm -f /tmp/smoke-test/.movp/config.yaml
-
-# Send a real tool-list request through MCP server to BFF
 cd /tmp/smoke-test
 echo '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' | \
   MOVP_URL=https://staging.mostviableproduct.com MOVP_API_KEY=<real-key> \
   node /path/to/big-wave/packages/mcp-server/index.js
 ```
 
-**After running:** Record the actual BFF response (HTTP status + body shape) in a comment at the top of `mcp-server/test/mcp-server.test.js`:
+**After running:**
+1. Record the BFF response shape at the top of `mcp-server/test/mcp-server.test.js` as a locked comment.
+2. If BFF returned HTTP 500 or unstructured error: file a BFF bug and block this task on the fix.
+3. Add a test asserting the MCP server proceeds without blocking regardless of which option is in use.
 
-```js
-// BFF contract: when .movp/config.yaml is absent, BFF returns:
-// <fill in after first run — e.g. HTTP 200 with { config_source: "defaults", ... }
-//                                  OR HTTP 422 with { error: "config_missing", ... }>
-// MCP server must NOT block the request in either case (fail-open).
-```
-
-Then add a test that sends the same request and asserts the MCP server proceeds without blocking (the BFF response shape is asserted by the comment, not the test, since it requires a live BFF).
+The locked comment becomes the spec. Any future BFF change breaking it causes a CI failure.
 
 - [ ] **Step 8.8: Final commit if any cleanup was needed**
 

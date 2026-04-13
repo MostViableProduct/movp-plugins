@@ -21,7 +21,9 @@ This design changes the install flow so MoVP is installed once, globally, coveri
 3. **One-command setup** — `movp init` authenticates and configures everything globally in two steps.
 4. **Backward compatibility** — existing project-level configs are preserved; existing project-scoped installs are migrated.
 
-**Known limitation:** Lazy config creation requires `.git` present (file or directory) in the project tree (or `MOVP_PROJECT_ROOT` set explicitly). Non-git workspaces (Mercurial, tarball-only, etc.) will not get auto-created `.movp/config.yaml` without the env override.
+**Known limitations:**
+- Lazy config creation requires `.git` present (file or directory) in the project tree (or `MOVP_PROJECT_ROOT` set explicitly). Non-git workspaces (Mercurial, tarball-only, etc.) will not get auto-created `.movp/config.yaml` without the env override.
+- Pre-release installs (`--channel=dev`) pin the plugin to the `main` branch of `movp-plugins`, which is a moving ref. This is an explicit, opt-in developer channel — not recommended for production use. Future hardening: replace `main` with a controlled `next` tag advanced on each pre-release build.
 
 ---
 
@@ -220,38 +222,51 @@ Logic: identical to today's `writeMovpConfig()` minus the `noRules` parameter:
 - Create `.movp/config.local.yaml` if absent; append `MOVP_FRONTEND_URL` if missing from existing file
 - Append `.gitignore` entries idempotently
 
-**Not** in `lib/helpers.js`. The canonical implementation lives only in `packages/cli/lib/project-config.js`. The MCP server inlines a copy directly in `index.js` — it does not import from this module and does not ship `project-config.js` as a separate file in the `mcp-server` package.
+**Not** in `lib/helpers.js`. The canonical CLI implementation lives only in `packages/cli/lib/project-config.js`.
 
 ### Package dependency
 
-`packages/mcp-server` does not depend on `packages/cli` today. Rather than adding that cross-dependency, inline `ensureProjectConfig` directly in `mcp-server/index.js` with the `DEFAULT_PROJECT_CONFIG` constant. The function is ~50 lines of `fs` operations with no CLI-specific imports.
+`packages/mcp-server` does not depend on `packages/cli` today and must not. Rather than inlining a copy into `index.js` (which creates a third source of truth that only sync comments can guard), the MCP server ships a **dedicated module**:
 
-To guard against drift, the MCP server copy must include a sync comment:
+**`packages/mcp-server/lib/project-root.js`** *(new file)* — exports `ensureProjectConfig`, `findGitRoot`, `validateProjectRoot`, and `DEFAULT_PROJECT_CONFIG`. This is the MCP server's own implementation, not a copy of the CLI module. It contains no CLI-specific imports.
+
+`index.js` requires this module directly:
 
 ```js
-// ensureProjectConfig — keep in sync with packages/cli/lib/project-config.js
-// Last synced: v<cli-version>
+const { ensureProjectConfig, findGitRoot, validateProjectRoot } = require("./lib/project-root");
 ```
 
-And the test suite must include **shared golden-fixture contract tests** run against both implementations:
+`test/mcp-server.test.js` also requires this module directly:
+
+```js
+const { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG } = require("../lib/project-root");
+```
+
+There is **no `test-helpers.js`** and no inline copy in `index.js`.
+
+**Parity with CLI:** Both `packages/cli/lib/project-config.js` and `packages/mcp-server/lib/project-root.js` must pass the same golden-fixture contract tests:
 - Empty repo (no `.movp/`): verify `config.yaml` created with full default content
 - Partial yaml (missing one top-level section): verify additive merge adds only the missing section
 - Full `config.yaml` already present: verify no changes
 - Missing `.gitignore`: verify entries appended
 - `.gitignore` already contains entries: verify idempotent (no duplicates)
 
-These fixture tests live in `packages/cli/test/project-config.test.js` and are re-run against the inlined MCP copy via a shared test helper. If both implementations pass the same fixtures, drift is caught automatically.
+These fixture tests live in `packages/cli/test/project-config.test.js`. The shared fixture runner is imported by `packages/mcp-server/test/mcp-server.test.js` and run against `../lib/project-root`. **CI proves parity** — not sync comments.
 
 ### Failure behavior
 
 Fail open. If `ensureProjectConfig` throws (permissions error, full disk, invalid YAML during additive merge), log the error to stderr and proceed with the BFF request. Missing `.movp/config.yaml` is a degraded state — the BFF may serve defaults or return an error to the client, but the MCP server itself does not block the request. The stderr warning surfaces the issue.
 
-**BFF contract when `.movp/config.yaml` is absent:** Before shipping, the BFF's behavior in this case must be verified and documented. Add a contract test in `packages/mcp-server/test/mcp-server.test.js` (Task 8, Step 8.7) that:
-1. Sends a minimal JSON-RPC request through the MCP server with no `.movp/config.yaml` present.
-2. Asserts the MCP server forwards the request without blocking.
-3. Documents and asserts the actual BFF response — either "serves config defaults" (HTTP 200 with a config payload) or "returns a structured error" — locking down the behavior so it cannot silently change.
+**BFF contract when `.movp/config.yaml` is absent:**
 
-The test must be written against the real BFF (staging or local), not mocked. This closes the correctness gap identified in the adversarial review of the deferred scope.
+The BFF **must** behave in one of two documented ways when no `.movp/config.yaml` exists for the current project:
+
+- **Option A (preferred): serve config defaults.** BFF returns HTTP 200 with a response body indicating `"config_source": "defaults"` (or equivalent). The MCP server proceeds normally; tools and skills work with degraded (default) configuration.
+- **Option B: return a structured error.** BFF returns HTTP 422 (or similar) with a machine-readable error code (e.g., `"error": "config_missing"`). The MCP server surfaces this as a tool error, not a crash.
+
+**The BFF must not** return HTTP 500 or an unstructured error in this case — that is a BFF bug.
+
+**Before shipping:** Verify which option the BFF implements and add a contract test in `packages/mcp-server/test/mcp-server.test.js` that asserts the actual response shape. The test must record the expected response in a comment so any future BFF change that breaks this contract causes a CI failure. This is Task 8, Step 8.7.
 
 ```
 [movp-mcp] Warning: could not create .movp/config.yaml: EACCES: permission denied
@@ -293,19 +308,23 @@ In `claude-plugin/commands/status.md` (line 31):
 
 ### `big-wave/packages/cli/test/project-config.test.js` *(new file)*
 - Golden-fixture contract tests for `ensureProjectConfig`: empty repo, partial yaml, full yaml present, missing gitignore, idempotent gitignore
-- Test helper exports a shared fixture runner so `mcp-server` tests can re-run the same cases against the inlined copy
+- Exports a shared `runGoldenFixtures(ensureProjectConfig, DEFAULT_PROJECT_CONFIG)` helper so `mcp-server` tests can re-run the same cases against `lib/project-root.js`
+
+### `big-wave/packages/mcp-server/lib/project-root.js` *(new file)*
+- Exports `ensureProjectConfig(root, { log })`, `findGitRoot(startDir)`, `validateProjectRoot(override)`, `DEFAULT_PROJECT_CONFIG`, `DEFAULT_LOCAL_CONFIG`
+- `findGitRoot`: tries `execFileSync("git", ["rev-parse", "--show-toplevel"], ...)` first (handles worktrees/submodules); falls back to `existsSync` walk if git is not on PATH
+- No CLI-specific imports; `packages/mcp-server` remains independent of `packages/cli`
 
 ### `big-wave/packages/mcp-server/index.js`
-- Add inlined `ensureProjectConfig` (copied from `lib/project-config.js`) with sync comment: `// keep in sync with packages/cli/lib/project-config.js — last synced: v<version>`
-- Add inlined `DEFAULT_PROJECT_CONFIG` constant
-- Add `MOVP_PROJECT_ROOT` validation: absolute path, existing directory, `fs.realpathSync`; fail fast with clear stderr if invalid
-- Add git root detection: `execFileSync("git", ["rev-parse", "--show-toplevel"], ...)` primary; `existsSync` walk fallback
-- Call `ensureProjectConfig` when `config.yaml` is absent before forwarding each request; fail open on error
+- Add `require("./lib/project-root")` — no inline copy, no sync comment
+- Add `MOVP_PROJECT_ROOT` validation at startup using `validateProjectRoot`; fail fast if invalid
+- Add lazy config check per request: if `config.yaml` absent, call `ensureProjectConfig`; fail open on error
 - Update fail-open stderr copy: no reference to `npx @movp/cli init`
 - Update "no root" stderr to 3-line actionable message (run from git checkout or set `MOVP_PROJECT_ROOT`)
 
-### `big-wave/packages/mcp-server/test/mcp-server.test.js` *(new or extend)*
-- Re-run golden-fixture contract tests against inlined `ensureProjectConfig` using shared test helper
+### `big-wave/packages/mcp-server/test/mcp-server.test.js` *(new file)*
+- `require("../lib/project-root")` directly — no `test-helpers.js`
+- Run shared golden-fixture suite (imported from `packages/cli/test/project-config.test.js`) against `lib/project-root.js` — **CI proves parity**
 - Add project root resolution tests: valid env override, invalid env (bad path, not a directory), `git rev-parse` succeeds, `git rev-parse` fails → fallback to `existsSync` walk, no `.git` found (skip + log)
 - Add BFF contract test: send minimal JSON-RPC with no `.movp/config.yaml`; assert MCP server forwards without blocking; document and assert actual BFF response shape
 
