@@ -1028,7 +1028,7 @@ function printInitHelp() {
     --url-only        Print setup URL to stdout instead of opening browser
     --force           Reconfigure, creating new API keys
                       (TTY: prompts for confirmation; non-TTY: requires MOVP_INIT_FORCE=1)
-    --channel=dev     Required for pre-release CLI versions; pins plugin to 'main' branch
+    --channel=dev     Required for pre-release CLI versions; pins plugin to 'next' pre-release channel
     -h, --help        Show this help text
 
   Environment:
@@ -1632,7 +1632,7 @@ node bin/cli.js init
 echo "Exit: $?"
 
 node bin/cli.js init --channel=dev
-# Expected: "⚠ Channel: dev" banner, marketplace pinned to 'main', exit code 0
+# Expected: "⚠ Channel: dev" banner, marketplace pinned to 'next', exit code 0
 ```
 
 - [ ] **Step 8.7: BFF contract test — no `.movp/config.yaml` present**

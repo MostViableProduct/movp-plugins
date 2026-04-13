@@ -214,9 +214,11 @@ This ensures worktrees and nested layouts resolve correctly while remaining safe
 
 Use `fs.existsSync(path.join(root, ".movp", "config.yaml"))` on each request. No `configEnsured` boolean. The stat call is negligible cost; caching by resolved path introduces fragility if cwd is wrong on the first request.
 
+**MCP root caching:** The MCP server resolves the project root (via `findGitRoot`) once per process lifetime (or when the working directory changes), not on every JSON-RPC message — `git rev-parse` and the `existsSync` walk are cheap but not free, and the resolved root is stable within a session.
+
 ### `ensureProjectConfig(root)` — new module
 
-Location: `packages/cli/lib/project-config.js`
+Location: `packages/movp-config/index.js` (as `@movp/config`)
 
 **Rationale:** `lib/helpers.js` is side-effect-free (no FS writes, no logging). `ensureProjectConfig` does both. A separate module preserves that contract.
 
