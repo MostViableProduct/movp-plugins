@@ -15,33 +15,41 @@
 ## File Map
 
 ### Created
-- `big-wave/packages/cli/lib/project-config.js` — canonical `ensureProjectConfig(root, { log })` + `DEFAULT_PROJECT_CONFIG` + `DEFAULT_LOCAL_CONFIG` constants
-- `big-wave/packages/cli/test/project-config.test.js` — golden-fixture contract tests + exports shared `runGoldenFixtures` helper
-- `big-wave/packages/mcp-server/lib/project-root.js` — MCP-side `ensureProjectConfig` + `findGitRoot` + `validateProjectRoot` + `DEFAULT_PROJECT_CONFIG`
-- `big-wave/packages/mcp-server/test/mcp-server.test.js` — imports `lib/project-root.js` directly + runs shared golden fixtures (CI parity) + root resolution tests
+- `big-wave/packages/movp-config/index.js` — **single source of truth**: `ensureProjectConfig`, `findGitRoot`, `validateProjectRoot`, `DEFAULT_PROJECT_CONFIG`, `DEFAULT_LOCAL_CONFIG`
+- `big-wave/packages/movp-config/package.json` — `{ "name": "@movp/config", "version": "0.0.1" }`
+- `big-wave/packages/movp-config/test/movp-config.test.js` — golden-fixture + root resolution tests
+- `big-wave/packages/cli/lib/project-config.js` — thin re-export: `module.exports = require("@movp/config")`
+- `big-wave/packages/mcp-server/test/mcp-server.test.js` — imports `@movp/config`; root resolution tests; BFF contract test
 
 ### Modified
+- `big-wave/packages/cli/package.json` — add `"@movp/config": "workspace:*"` dependency
 - `big-wave/packages/cli/lib/helpers.js` — add `extraKnownMarketplaces` + `enabledPlugins` merge handling in `mergeJsonConfig`
 - `big-wave/packages/cli/bin/cli.js` — rewrite `runInit`, add `registerMarketplace` + `migrateProjectScoped`, add `--channel=dev` gate, remove `--no-rules`, update help text + top comment
 - `big-wave/packages/cli/test/cli.test.js` — add tests for new merge keys, `registerMarketplace`, `migrateProjectScoped`
-- `big-wave/packages/mcp-server/index.js` — `require("./lib/project-root")`; no inline copy; add lazy config check per request
+- `big-wave/packages/mcp-server/package.json` — add `"@movp/config": "workspace:*"` dependency
+- `big-wave/packages/mcp-server/index.js` — `require("@movp/config")`; no copies; add lazy config check per request
 - `mona-lisa/claude-plugin/commands/status.md` — update fallback messaging
 
 ---
 
-## Task 1: Extract `project-config.js` module with contract tests
+## Task 1: Create `packages/movp-config` shared package + contract tests
+
+**Purpose:** Single source of truth for `ensureProjectConfig`, `findGitRoot`, `validateProjectRoot`, and config defaults. Both `packages/cli` and `packages/mcp-server` depend on this package via workspace links.
 
 **Files:**
-- Create: `big-wave/packages/cli/lib/project-config.js`
-- Create: `big-wave/packages/cli/test/project-config.test.js`
+- Create: `big-wave/packages/movp-config/package.json`
+- Create: `big-wave/packages/movp-config/index.js`
+- Create: `big-wave/packages/movp-config/test/movp-config.test.js`
+- Create: `big-wave/packages/cli/lib/project-config.js` *(thin re-export)*
+- Modify: `big-wave/packages/cli/package.json` *(add `@movp/config` workspace dep)*
 
 - [ ] **Step 1.1: Write failing contract tests**
 
-Create `big-wave/packages/cli/test/project-config.test.js`:
+Create `big-wave/packages/movp-config/test/movp-config.test.js`:
 
 ```js
-// @movp/cli — project-config contract tests (node --test)
-// These same fixtures must pass against the inlined copy in mcp-server/index.js.
+// @movp/config — contract tests (node --test)
+// Single test suite for the shared config package used by both cli and mcp-server.
 "use strict";
 
 const { test } = require("node:test");
@@ -50,8 +58,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// This require will fail until project-config.js is created — that's the point.
-const { ensureProjectConfig, DEFAULT_PROJECT_CONFIG } = require("../lib/project-config");
+// This require will fail until movp-config/index.js is created — that's the point.
+const { ensureProjectConfig, DEFAULT_PROJECT_CONFIG } = require("..");
 
 function makeTmpGitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "movp-pc-test-"));
@@ -168,25 +176,37 @@ test("ensureProjectConfig — does not duplicate MOVP_FRONTEND_URL in config.loc
 - [ ] **Step 1.2: Run tests to confirm they fail**
 
 ```bash
-cd /path/to/big-wave/packages/cli
-node --test test/project-config.test.js
+cd /path/to/big-wave/packages/movp-config
+node --test test/movp-config.test.js
 ```
 
-Expected: `Cannot find module '../lib/project-config'`
+Expected: `Cannot find module '..'` (package index does not exist yet)
 
-- [ ] **Step 1.3: Create `packages/cli/lib/project-config.js`**
+- [ ] **Step 1.3: Create `packages/movp-config/package.json` and `index.js`**
 
-Extract from `writeMovpConfig` in `bin/cli.js` (lines 987–1041). The new module removes `console.log` in favor of an optional `log` function:
+Create `big-wave/packages/movp-config/package.json`:
+
+```json
+{
+  "name": "@movp/config",
+  "version": "0.0.1",
+  "main": "index.js",
+  "license": "UNLICENSED"
+}
+```
+
+Create `big-wave/packages/movp-config/index.js` — extracted from `writeMovpConfig` in `bin/cli.js` (lines 987–1041). Removes `console.log` in favor of an optional `log` function. Adds `findGitRoot` and `validateProjectRoot` (from the MCP root resolution design):
 
 ```js
 "use strict";
-// packages/cli/lib/project-config.js
-// Canonical implementation of ensureProjectConfig.
-// The MCP server inlines a copy of this function in index.js.
-// When making changes here, update the inlined copy and bump the sync comment.
-// Sync tag: v1.0.7
+// packages/movp-config/index.js
+// Single source of truth for project config creation and project root resolution.
+// Used by packages/cli and packages/mcp-server via workspace dependency.
+// No CLI-specific or MCP-specific imports.
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { execFileSync } = require("child_process");
 
 const DEFAULT_PROJECT_CONFIG = `version: 1
 review:
@@ -316,24 +336,80 @@ function ensureProjectConfig(root, { log = () => {} } = {}) {
   } catch { /* gitignore update is best-effort */ }
 }
 
-module.exports = { ensureProjectConfig, DEFAULT_PROJECT_CONFIG, DEFAULT_LOCAL_CONFIG };
+function findGitRoot(startDir) {
+  try {
+    const result = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: startDir,
+      timeout: 500,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return result.trim();
+  } catch {
+    // Fall through to existsSync walk (git not on PATH, or not a git repo)
+  }
+  const home = os.homedir();
+  let dir = path.resolve(startDir);
+  while (true) {
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir || dir === home) return null;
+    dir = parent;
+  }
+}
+
+function validateProjectRoot(override) {
+  if (!path.isAbsolute(override)) {
+    throw new Error(`MOVP_PROJECT_ROOT is invalid: "${override}" is not an absolute path.`);
+  }
+  let resolved;
+  try {
+    resolved = fs.realpathSync(override);
+  } catch {
+    throw new Error(`MOVP_PROJECT_ROOT is invalid: "${override}" does not exist.`);
+  }
+  if (!fs.statSync(resolved).isDirectory()) {
+    throw new Error(`MOVP_PROJECT_ROOT is invalid: "${override}" is not a directory.`);
+  }
+  return resolved;
+}
+
+module.exports = { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG, DEFAULT_LOCAL_CONFIG };
+```
+
+Also add a thin re-export in `big-wave/packages/cli/lib/project-config.js`:
+
+```js
+"use strict";
+// Thin re-export — canonical implementation is in @movp/config.
+module.exports = require("@movp/config");
+```
+
+And add the workspace dependency to `big-wave/packages/cli/package.json`:
+
+```json
+{
+  "dependencies": {
+    "@movp/config": "workspace:*"
+  }
+}
 ```
 
 - [ ] **Step 1.4: Run tests — should pass**
 
 ```bash
-cd /path/to/big-wave/packages/cli
-node --test test/project-config.test.js
+cd /path/to/big-wave/packages/movp-config
+node --test test/movp-config.test.js
 ```
 
-Expected: all 7 tests pass.
+Expected: all tests pass.
 
 - [ ] **Step 1.5: Commit**
 
 ```bash
 cd /path/to/big-wave
-git add packages/cli/lib/project-config.js packages/cli/test/project-config.test.js
-git commit -m "feat(cli): extract ensureProjectConfig to lib/project-config.js with contract tests"
+git add packages/movp-config/ packages/cli/lib/project-config.js packages/cli/package.json
+git commit -m "feat(movp-config): extract ensureProjectConfig + findGitRoot + validateProjectRoot to shared package"
 ```
 
 ---
@@ -541,14 +617,14 @@ test("registerMarketplace — fresh install writes marketplace + enabledPlugins"
   fs.rmSync(tmpDir, { recursive: true });
 });
 
-test("registerMarketplace — pre-release version uses 'main' tag (function-level, gate is in runInit)", () => {
-  // registerMarketplace itself still maps pre-releases to "main".
-  // The --channel=dev gate that prevents calling registerMarketplace with a pre-release
-  // version lives in runInit(), not here. This test confirms the function-level behavior.
+test("registerMarketplace — pre-release version uses 'next' tag (function-level, gate is in runInit)", () => {
+  // registerMarketplace itself maps pre-releases to "next" (controlled moving tag in movp-plugins).
+  // The --channel=dev gate that prevents calling registerMarketplace without the flag
+  // lives in runInit(), not here. This test confirms the function-level behavior.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "movp-test-"));
   registerMarketplace(tmpDir, "1.1.0-beta.1");
   const written = JSON.parse(fs.readFileSync(path.join(tmpDir, ".claude", "settings.json"), "utf8"));
-  assert.equal(written.extraKnownMarketplaces.movp.source.tag, "main", "pre-release should use main tag");
+  assert.equal(written.extraKnownMarketplaces.movp.source.tag, "next", "pre-release should use next tag");
   fs.rmSync(tmpDir, { recursive: true });
 });
 
@@ -588,7 +664,7 @@ Add to `big-wave/packages/cli/lib/helpers.js` before `module.exports`:
  * @param {string} version  CLI package.json version string.
  */
 function registerMarketplace(homeDir, version) {
-  const tag = version.includes("-") ? "main" : "v" + version;
+  const tag = version.includes("-") ? "next" : "v" + version;
   return mergeJsonConfig(homeDir, {
     config_file: ".claude/settings.json",
     config_json: {
@@ -635,13 +711,13 @@ In `runInit()`, replace the `// ── Step 3/3: Project config` block (lines 94
   const cliVersion = require("../package.json").version;
   if (cliVersion.includes("-") && channel !== "dev") {
     console.error("\n  Error: pre-release CLI versions require --channel=dev to install.");
-    console.error("  This prevents accidentally pinning your MoVP plugin to the floating 'main' branch.");
+    console.error("  This prevents accidentally pinning your MoVP plugin to the 'next' pre-release channel.");
     console.error("  Re-run: npx @movp/cli@" + cliVersion + " init --channel=dev\n");
     process.exitCode = 1;
     return;
   }
   if (channel === "dev") {
-    console.log("  ⚠ Channel: dev — plugin will be pinned to 'main' (pre-release build, not for production use)");
+    console.log("  ⚠ Channel: dev — plugin will be pinned to 'next' pre-release channel (not for production use)");
   }
 
   // ── Marketplace registration (always, independent of selected tools) ──────
@@ -649,7 +725,7 @@ In `runInit()`, replace the `// ── Step 3/3: Project config` block (lines 94
   const marketplaceOk = registerMarketplace(os.homedir(), cliVersion);
   if (marketplaceOk) {
     console.log("      ~/.claude/settings.json → marketplace registered (movp@" +
-      (cliVersion.includes("-") ? "main" : "v" + cliVersion) + ")");
+      (cliVersion.includes("-") ? "next" : "v" + cliVersion) + ")");
     console.log("      ~/.claude/settings.json → plugin enabled (user-scoped)");
   } else {
     console.error("      marketplace registration failed — check ~/.claude/settings.json");
@@ -998,10 +1074,13 @@ git commit -m "feat(cli): rewrite runInit as 2-step global setup — remove proj
 
 ## Task 6: MCP server — project root resolution + lazy config creation
 
-**Architecture note:** The previous approach used `test-helpers.js` (a test-only copy of `ensureProjectConfig`) plus an inline copy in `index.js`. This created three sources of truth with no CI enforcement of parity. This task instead creates `packages/mcp-server/lib/project-root.js` as a first-class module. Both `index.js` and the test file require it directly. CI runs the shared golden-fixture suite against it, proving parity with the CLI module without sync comments.
+**Architecture note:** Earlier revisions used `test-helpers.js` (test-only copy) and an inline copy in `index.js` — three sources of truth. The current revision eliminates all copies by creating `packages/movp-config` as a shared package. Both `packages/cli` and `packages/mcp-server` depend on it as a workspace package. There is **one implementation**; no golden-fixture re-runs or sync comments are needed for parity.
+
+**New task scope:** Task 1 now creates `packages/movp-config` (not just `packages/cli/lib/project-config.js`). This task wires `packages/mcp-server` to use `@movp/config`.
 
 **Files:**
-- Create: `big-wave/packages/mcp-server/lib/project-root.js`
+- Create: `big-wave/packages/movp-config/index.js` *(belongs to Task 1 — do it there)*
+- Modify: `big-wave/packages/mcp-server/package.json` — add workspace dependency
 - Modify: `big-wave/packages/mcp-server/index.js`
 - Create: `big-wave/packages/mcp-server/test/mcp-server.test.js`
 
@@ -1020,9 +1099,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// All testable functions are exported from lib/project-root.js.
-// index.js requires the same module at runtime — no duplicate copies.
-const { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG } = require("../lib/project-root");
+// All testable functions come from @movp/config — the single source of truth.
+// index.js requires the same package at runtime.
+const { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG } = require("@movp/config");
 
 function makeTmpGitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "movp-mcp-test-"));
@@ -1156,13 +1235,28 @@ mkdir -p test
 node --test test/mcp-server.test.js 2>&1 | head -20
 ```
 
-Expected: `Cannot find module '../lib/project-root'`
+Expected: `Cannot find module '@movp/config'`
 
-- [ ] **Step 6.3: Create `big-wave/packages/mcp-server/lib/project-root.js`**
+- [ ] **Step 6.3: Add `@movp/config` workspace dependency to `packages/mcp-server`**
 
-This is a first-class module — not a test helper. It is required by both `index.js` at runtime and `test/mcp-server.test.js` in tests. There is no `test-helpers.js` and no inline copy in `index.js`.
+In `big-wave/packages/mcp-server/package.json`, add:
 
-**CI parity:** The shared `runGoldenFixtures` helper (from `packages/cli/test/project-config.test.js`) is run against this module. If the golden fixtures pass both the CLI module and this module, parity is proved by CI — not sync comments.
+```json
+{
+  "dependencies": {
+    "@movp/config": "workspace:*"
+  }
+}
+```
+
+Then run the package manager to install:
+
+```bash
+cd /path/to/big-wave
+npm install  # or pnpm install / yarn install depending on the workspace toolchain
+```
+
+After this step, `require("@movp/config")` resolves to `packages/movp-config/index.js` at runtime and in tests.
 
 ```js
 "use strict";
@@ -1355,7 +1449,7 @@ Expected: all tests pass (the `findGitRoot` null test may vary by environment �
 1. Add to the top-level `require` block in `big-wave/packages/mcp-server/index.js`:
 
 ```js
-const { ensureProjectConfig, findGitRoot, validateProjectRoot } = require("./lib/project-root");
+const { ensureProjectConfig, findGitRoot, validateProjectRoot } = require("@movp/config");
 ```
 
 2. After the `frontendBase` constant (around line 70), add only the startup validation and the one-time warning flag:
@@ -1589,5 +1683,5 @@ git commit -m "chore(cli): remove stale --no-rules / writeMovpConfig references"
 | Fail-open | `chmod 000 .movp/` then send MCP request | Server continues, stderr warning |
 | MOVP_PROJECT_ROOT | `MOVP_PROJECT_ROOT=/tmp/smoke claude` | config.yaml created at specified path |
 | Pre-release gate (no flag) | init with CLI version `1.1.0-beta.1`, no `--channel=dev` | Exits with error referencing `--channel=dev` |
-| Pre-release gate (with flag) | init with CLI version `1.1.0-beta.1 --channel=dev` | `⚠ Channel: dev` banner, marketplace pinned to `main` |
+| Pre-release gate (with flag) | init with CLI version `1.1.0-beta.1 --channel=dev` | `⚠ Channel: dev` banner, marketplace pinned to `next` |
 | BFF contract | Send MCP request with no config.yaml (staging BFF) | MCP forwards without blocking; BFF response shape documented in test file |

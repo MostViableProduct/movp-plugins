@@ -23,7 +23,7 @@ This design changes the install flow so MoVP is installed once, globally, coveri
 
 **Known limitations:**
 - Lazy config creation requires `.git` present (file or directory) in the project tree (or `MOVP_PROJECT_ROOT` set explicitly). Non-git workspaces (Mercurial, tarball-only, etc.) will not get auto-created `.movp/config.yaml` without the env override.
-- Pre-release installs (`--channel=dev`) pin the plugin to the `main` branch of `movp-plugins`, which is a moving ref. This is an explicit, opt-in developer channel — not recommended for production use. Future hardening: replace `main` with a controlled `next` tag advanced on each pre-release build.
+- Pre-release installs (`--channel=dev`) pin the plugin to the `next` tag of `movp-plugins`, which is a controlled moving ref (advanced by CI on each pre-release publish). This is an explicit, opt-in developer channel — not recommended for production use.
 
 ---
 
@@ -104,17 +104,23 @@ Calls `mergeJsonConfig(os.homedir(), snippet)` where `snippet.config_json` is:
 }
 ```
 
-Tag is derived from CLI `package.json` version as `"v" + version`. Pre-release versions (containing `-`) require `--channel=dev` to be passed to `movp init`. Without the flag, `init` exits with an error:
+Tag is derived from CLI `package.json` version:
+- Stable release (`1.2.3`): `"v1.2.3"`
+- Pre-release (`1.2.3-beta.1` with `--channel=dev`): `"next"`
+
+**`next` tag:** The `movp-plugins` repo maintains a `next` tag (e.g., via a CI step in big-wave that runs `git tag -f next && git push --force origin next` on each pre-release publish). This is a **controlled moving ref** — advanced by the team on each pre-release, not trunk. It is versioned, not `main`.
+
+Pre-release versions require `--channel=dev` to be passed to `movp init`. Without the flag, `init` exits with an error:
 
     Error: pre-release CLI versions require --channel=dev to install.
-    This prevents accidentally pinning your MoVP plugin to the floating 'main' branch.
+    This prevents accidentally pinning your MoVP plugin to the 'next' pre-release channel.
     Re-run: npx @movp/cli@<version> init --channel=dev
 
-With `--channel=dev`, the tag is `"main"` and a loud warning banner is printed:
+With `--channel=dev`, the tag is `"next"` and a loud warning banner is printed:
 
-    ⚠ Channel: dev — plugin pinned to 'main' (pre-release build, not for production use)
+    ⚠ Channel: dev — plugin pinned to 'next' pre-release channel (not for production use)
 
-`registerMarketplace()` itself is unchanged — it derives `tag = version.includes("-") ? "main" : "v" + version`. The gate lives in `runInit()`: check version before calling `registerMarketplace`.
+`registerMarketplace()` derives `tag = version.includes("-") ? "next" : "v" + version`. The gate lives in `runInit()`: check version before calling `registerMarketplace`.
 
 ### `migrateProjectScoped()` — new function in `bin/cli.js`
 
@@ -222,36 +228,35 @@ Logic: identical to today's `writeMovpConfig()` minus the `noRules` parameter:
 - Create `.movp/config.local.yaml` if absent; append `MOVP_FRONTEND_URL` if missing from existing file
 - Append `.gitignore` entries idempotently
 
-**Not** in `lib/helpers.js`. The canonical CLI implementation lives only in `packages/cli/lib/project-config.js`.
+**Not** in `lib/helpers.js`.
 
-### Package dependency
+### Package dependency — shared `packages/movp-config`
 
-`packages/mcp-server` does not depend on `packages/cli` today and must not. Rather than inlining a copy into `index.js` (which creates a third source of truth that only sync comments can guard), the MCP server ships a **dedicated module**:
+`packages/mcp-server` must not depend on `packages/cli` — they are independently deployable. The solution is a **shared package** that both depend on:
 
-**`packages/mcp-server/lib/project-root.js`** *(new file)* — exports `ensureProjectConfig`, `findGitRoot`, `validateProjectRoot`, and `DEFAULT_PROJECT_CONFIG`. This is the MCP server's own implementation, not a copy of the CLI module. It contains no CLI-specific imports.
+**`packages/movp-config`** *(new package)* — exports `ensureProjectConfig(root, { log })`, `findGitRoot(startDir)`, `validateProjectRoot(override)`, `DEFAULT_PROJECT_CONFIG`, and `DEFAULT_LOCAL_CONFIG`. No CLI-specific imports. No MCP-specific imports. Pure `fs`/`path`/`os`/`child_process` stdlib.
 
-`index.js` requires this module directly:
+Both packages declare a workspace dependency:
 
-```js
-const { ensureProjectConfig, findGitRoot, validateProjectRoot } = require("./lib/project-root");
+```json
+// packages/cli/package.json
+{ "dependencies": { "@movp/config": "workspace:*" } }
+
+// packages/mcp-server/package.json
+{ "dependencies": { "@movp/config": "workspace:*" } }
 ```
 
-`test/mcp-server.test.js` also requires this module directly:
+`packages/cli/lib/project-config.js` becomes a thin re-export (or is removed; callers import `@movp/config` directly). `packages/mcp-server/index.js` requires `@movp/config` directly:
 
 ```js
-const { ensureProjectConfig, findGitRoot, validateProjectRoot, DEFAULT_PROJECT_CONFIG } = require("../lib/project-root");
+const { ensureProjectConfig, findGitRoot, validateProjectRoot } = require("@movp/config");
 ```
 
-There is **no `test-helpers.js`** and no inline copy in `index.js`.
+`test/mcp-server.test.js` also requires `@movp/config` directly. There is **no `lib/project-root.js`**, no `test-helpers.js`, and no inline copy in `index.js`.
 
-**Parity with CLI:** Both `packages/cli/lib/project-config.js` and `packages/mcp-server/lib/project-root.js` must pass the same golden-fixture contract tests:
-- Empty repo (no `.movp/`): verify `config.yaml` created with full default content
-- Partial yaml (missing one top-level section): verify additive merge adds only the missing section
-- Full `config.yaml` already present: verify no changes
-- Missing `.gitignore`: verify entries appended
-- `.gitignore` already contains entries: verify idempotent (no duplicates)
+**Parity is structural** — there is one implementation. The golden-fixture tests in `packages/movp-config/test/` verify correctness once; no re-run across packages needed.
 
-These fixture tests live in `packages/cli/test/project-config.test.js`. The shared fixture runner is imported by `packages/mcp-server/test/mcp-server.test.js` and run against `../lib/project-root`. **CI proves parity** — not sync comments.
+**If workspace packages are not viable** (e.g., deployment constraint or build complexity), fall back to `packages/mcp-server/lib/project-root.js` with shared golden-fixture CI as described in the previous revision. Document this tradeoff in the implementation PR.
 
 ### Failure behavior
 
@@ -297,34 +302,29 @@ In `claude-plugin/commands/status.md` (line 31):
 ### `big-wave/packages/cli/lib/helpers.js`
 - Extend `mergeJsonConfig()`: add `extraKnownMarketplaces` and `enabledPlugins` merge keys
 
-### `big-wave/packages/cli/lib/project-config.js` *(new file)*
-- Export `ensureProjectConfig(root)`, `DEFAULT_PROJECT_CONFIG`, `DEFAULT_LOCAL_CONFIG`
-- Extracted from `writeMovpConfig()` in `bin/cli.js`
+### `big-wave/packages/movp-config/` *(new package — preferred)*
+- `index.js`: exports `ensureProjectConfig(root, { log })`, `findGitRoot(startDir)`, `validateProjectRoot(override)`, `DEFAULT_PROJECT_CONFIG`, `DEFAULT_LOCAL_CONFIG`
+- `findGitRoot`: `execFileSync("git", ["rev-parse", "--show-toplevel"], ...)` primary; `existsSync` walk fallback
+- `package.json`: `{ "name": "@movp/config", "version": "0.0.1" }` — no external dependencies
+- `test/movp-config.test.js`: golden-fixture contract tests (empty repo, partial yaml, full yaml, missing gitignore, idempotent gitignore); also tests `findGitRoot` and `validateProjectRoot`
+
+### `big-wave/packages/cli/lib/project-config.js` *(new thin re-export)*
+- Re-exports from `@movp/config` for backward-compatibility with any existing callers: `module.exports = require("@movp/config");`
 
 ### `big-wave/packages/cli/test/cli.test.js`
 - Add `mergeJsonConfig` tests for `extraKnownMarketplaces` and `enabledPlugins`
 - Add `migrateProjectScoped` tests: absent file, key present, empty `enabledPlugins` after removal
 - Add `registerMarketplace` tests: fresh install, idempotent re-run, pre-release tag handling
 
-### `big-wave/packages/cli/test/project-config.test.js` *(new file)*
-- Golden-fixture contract tests for `ensureProjectConfig`: empty repo, partial yaml, full yaml present, missing gitignore, idempotent gitignore
-- Exports a shared `runGoldenFixtures(ensureProjectConfig, DEFAULT_PROJECT_CONFIG)` helper so `mcp-server` tests can re-run the same cases against `lib/project-root.js`
-
-### `big-wave/packages/mcp-server/lib/project-root.js` *(new file)*
-- Exports `ensureProjectConfig(root, { log })`, `findGitRoot(startDir)`, `validateProjectRoot(override)`, `DEFAULT_PROJECT_CONFIG`, `DEFAULT_LOCAL_CONFIG`
-- `findGitRoot`: tries `execFileSync("git", ["rev-parse", "--show-toplevel"], ...)` first (handles worktrees/submodules); falls back to `existsSync` walk if git is not on PATH
-- No CLI-specific imports; `packages/mcp-server` remains independent of `packages/cli`
-
 ### `big-wave/packages/mcp-server/index.js`
-- Add `require("./lib/project-root")` — no inline copy, no sync comment
+- Add `require("@movp/config")` — one source, no copies, no sync comment
 - Add `MOVP_PROJECT_ROOT` validation at startup using `validateProjectRoot`; fail fast if invalid
 - Add lazy config check per request: if `config.yaml` absent, call `ensureProjectConfig`; fail open on error
 - Update fail-open stderr copy: no reference to `npx @movp/cli init`
 - Update "no root" stderr to 3-line actionable message (run from git checkout or set `MOVP_PROJECT_ROOT`)
 
 ### `big-wave/packages/mcp-server/test/mcp-server.test.js` *(new file)*
-- `require("../lib/project-root")` directly — no `test-helpers.js`
-- Run shared golden-fixture suite (imported from `packages/cli/test/project-config.test.js`) against `lib/project-root.js` — **CI proves parity**
+- `require("@movp/config")` directly — one source of truth, no test-only copies
 - Add project root resolution tests: valid env override, invalid env (bad path, not a directory), `git rev-parse` succeeds, `git rev-parse` fails → fallback to `existsSync` walk, no `.git` found (skip + log)
 - Add BFF contract test: send minimal JSON-RPC with no `.movp/config.yaml`; assert MCP server forwards without blocking; document and assert actual BFF response shape
 
