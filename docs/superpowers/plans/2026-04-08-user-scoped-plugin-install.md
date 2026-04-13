@@ -540,11 +540,14 @@ test("registerMarketplace — fresh install writes marketplace + enabledPlugins"
   fs.rmSync(tmpDir, { recursive: true });
 });
 
-test("registerMarketplace — pre-release version uses 'main' tag", () => {
+test("registerMarketplace — pre-release version uses 'main' tag (function-level, gate is in runInit)", () => {
+  // registerMarketplace itself still maps pre-releases to "main".
+  // The --channel=dev gate that prevents calling registerMarketplace with a pre-release
+  // version lives in runInit(), not here. This test confirms the function-level behavior.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "movp-test-"));
   registerMarketplace(tmpDir, "1.1.0-beta.1");
   const written = JSON.parse(fs.readFileSync(path.join(tmpDir, ".claude", "settings.json"), "utf8"));
-  assert.equal(written.extraKnownMarketplaces.movp.source.tag, "main", "pre-release should use main");
+  assert.equal(written.extraKnownMarketplaces.movp.source.tag, "main", "pre-release should use main tag");
   fs.rmSync(tmpDir, { recursive: true });
 });
 
@@ -622,12 +625,26 @@ In `big-wave/packages/cli/bin/cli.js`, update the import on line 31:
 const { redactSecrets, mergeJsonConfig, registerMarketplace, isTransientGatewayStatus, extractPollErrorMessage } = require("../lib/helpers");
 ```
 
-In `runInit()`, replace the `// ── Step 3/3: Project config` block (lines 947–955) with the marketplace registration call. **Note:** `registerMarketplace` always runs regardless of which tools were selected — only API key minting is per-tool. A `marketplaceFailed` flag is tracked independently of `failCount`:
+In `runInit()`, replace the `// ── Step 3/3: Project config` block (lines 947–955) with the marketplace registration call. **Note:** `registerMarketplace` always runs regardless of which tools were selected — only API key minting is per-tool. A `marketplaceFailed` flag is tracked independently of `failCount`.
+
+**Pre-release gate:** Before calling `registerMarketplace`, check if `cliVersion` is a pre-release AND `channel !== "dev"`. If so, exit with an error. If `channel === "dev"`, print the dev-channel banner before proceeding.
 
 ```js
+  // ── Pre-release gate ──────────────────────────────────────────────────────
+  const cliVersion = require("../package.json").version;
+  if (cliVersion.includes("-") && channel !== "dev") {
+    console.error("\n  Error: pre-release CLI versions require --channel=dev to install.");
+    console.error("  This prevents accidentally pinning your MoVP plugin to the floating 'main' branch.");
+    console.error("  Re-run: npx @movp/cli@" + cliVersion + " init --channel=dev\n");
+    process.exitCode = 1;
+    return;
+  }
+  if (channel === "dev") {
+    console.log("  ⚠ Channel: dev — plugin will be pinned to 'main' (pre-release build, not for production use)");
+  }
+
   // ── Marketplace registration (always, independent of selected tools) ──────
   let marketplaceFailed = false;
-  const cliVersion = require("../package.json").version;
   const marketplaceOk = registerMarketplace(os.homedir(), cliVersion);
   if (marketplaceOk) {
     console.log("      ~/.claude/settings.json → marketplace registered (movp@" +
@@ -879,12 +896,18 @@ to:
 
 **Note:** Success/failure banner is handled in Task 3.5. The old banner at end of `runInit()` is removed as part of Task 3.5's replacement of the Step 3/3 block.
 
-- [ ] **Step 5.2: Remove `--no-rules` from arg parsing**
+- [ ] **Step 5.2: Remove `--no-rules` and add `--channel` to arg parsing**
 
 In the `} else if (command === "init") {` block (around line 79), remove:
 
 ```js
   const noRules = args.includes("--no-rules");
+```
+
+Add in its place:
+
+```js
+  const channel = args.includes("--channel=dev") ? "dev" : undefined;
 ```
 
 Update the `runInit` call from:
@@ -896,7 +919,7 @@ Update the `runInit` call from:
 to:
 
 ```js
-  runInit(forcedTool, { urlOnly, force }).catch((e) => { console.error(e.message); process.exit(1); });
+  runInit(forcedTool, { urlOnly, force, channel }).catch((e) => { console.error(e.message); process.exit(1); });
 ```
 
 Update `runInit` signature from:
@@ -908,10 +931,10 @@ async function runInit(forcedTool, { noRules = false, urlOnly = false, force = f
 to:
 
 ```js
-async function runInit(forcedTool, { urlOnly = false, force = false } = {}) {
+async function runInit(forcedTool, { urlOnly = false, force = false, channel = undefined } = {}) {
 ```
 
-- [ ] **Step 5.3: Update `printInitHelp()` — remove `--no-rules`, update description**
+- [ ] **Step 5.3: Update `printInitHelp()` — remove `--no-rules`, add `--channel=dev`, update description**
 
 Replace the body of `printInitHelp()`:
 
@@ -923,12 +946,13 @@ function printInitHelp() {
   Authenticate and configure AI coding tools (user-scoped, all projects).
 
   Options:
-    --cursor       Configure Cursor only (skip interactive prompt)
-    --codex        Configure Codex only (requires \`codex\` on PATH; skip prompt)
-    --url-only     Print setup URL to stdout instead of opening browser
-    --force        Reconfigure, creating new API keys
-                   (TTY: prompts for confirmation; non-TTY: requires MOVP_INIT_FORCE=1)
-    -h, --help     Show this help text
+    --cursor          Configure Cursor only (skip interactive prompt)
+    --codex           Configure Codex only (requires \`codex\` on PATH; skip prompt)
+    --url-only        Print setup URL to stdout instead of opening browser
+    --force           Reconfigure, creating new API keys
+                      (TTY: prompts for confirmation; non-TTY: requires MOVP_INIT_FORCE=1)
+    --channel=dev     Required for pre-release CLI versions; pins plugin to 'main' branch
+    -h, --help        Show this help text
 
   Environment:
     MOVP_INIT_FORCE=1   Required for --force in non-interactive (CI/piped) mode
@@ -1150,6 +1174,7 @@ This file exports the pure functions that will be added to `index.js`, allowing 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { execFileSync } = require("child_process");
 
 // ─── Inlined ensureProjectConfig ──────────────────────────────────────────────
 // Exact copy from packages/cli/lib/project-config.js — keep in sync.
@@ -1268,6 +1293,19 @@ function ensureProjectConfig(root, { log = () => {} } = {}) {
 // ─── Project root resolution ──────────────────────────────────────────────────
 
 function findGitRoot(startDir) {
+  // Primary: git rev-parse (handles worktrees, submodules, non-standard layouts)
+  try {
+    const result = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: startDir,
+      timeout: 500,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return result.trim();
+  } catch {
+    // Fall through to existsSync walk (git not on PATH, or not a git repo)
+  }
+  // Fallback: existsSync walk
   const home = os.homedir();
   let dir = path.resolve(startDir);
   while (true) {
@@ -1313,7 +1351,15 @@ Expected: all tests pass (the `findGitRoot` null test may vary by environment �
 
 - [ ] **Step 6.5: Add the same functions + lazy check to `index.js`**
 
-In `big-wave/packages/mcp-server/index.js`, after the `frontendBase` constant (around line 70), add:
+In `big-wave/packages/mcp-server/index.js`:
+
+1. Add to the top-level `require` block (near the existing `fs`/`path`/`os` requires):
+
+```js
+const { execFileSync } = require("child_process");
+```
+
+2. After the `frontendBase` constant (around line 70), add:
 
 ```js
 // ─── Project root resolution + lazy config ────────────────────────────────────
@@ -1438,6 +1484,19 @@ function mcpEnsureProjectConfig(root) {
 }
 
 function findGitRoot(startDir) {
+  // Primary: git rev-parse (handles worktrees, submodules, non-standard layouts)
+  try {
+    const result = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: startDir,
+      timeout: 500,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return result.trim();
+  } catch {
+    // Fall through to existsSync walk (git not on PATH, or not a git repo)
+  }
+  // Fallback: existsSync walk
   const home = os.homedir();
   let dir = path.resolve(startDir);
   while (true) {
@@ -1447,6 +1506,9 @@ function findGitRoot(startDir) {
     dir = parent;
   }
 }
+
+// Note: findGitRoot is defined inline above in the lazy config block,
+// identical to test-helpers.js. Keep in sync.
 
 // Validate MOVP_PROJECT_ROOT at startup — fail fast if set but invalid.
 // Per-request: root = validatedOverrideRoot || findGitRoot(process.cwd())
@@ -1493,7 +1555,8 @@ rl.on("line", async (line) => {
   } else if (!root && !noRootWarningLogged) {
     noRootWarningLogged = true;
     process.stderr.write("[movp-mcp] Could not determine project root — skipping .movp/config.yaml creation.\n");
-    process.stderr.write("[movp-mcp] Set MOVP_PROJECT_ROOT to your project directory if needed.\n");
+    process.stderr.write("[movp-mcp] Run MoVP from a git checkout, or set MOVP_PROJECT_ROOT=/path/to/project\n");
+    process.stderr.write("[movp-mcp] before starting Claude to enable automatic config creation.\n");
   }
 
   const trimmed = line.trim();
@@ -1559,7 +1622,7 @@ git commit -m "fix(commands): update status.md fallback messaging for new init f
 **Files:**
 - Modify: `big-wave/packages/cli/bin/cli.js` (if any `noRules` references missed)
 
-- [ ] **Step 8.1: Grep for stale `--no-rules` and `noRules` references**
+- [ ] **Step 8.1: Grep for stale `--no-rules`, `noRules`, and stale `--channel` references**
 
 ```bash
 cd /path/to/big-wave
@@ -1572,6 +1635,15 @@ grep -rn "no-rules\|noRules" . --include="*.js" --include="*.md" --exclude-dir=n
 ```
 
 Expected: zero matches. If any found, remove them.
+
+Also verify `--channel` is only present in the init arg parser (not elsewhere as a stale reference):
+
+```bash
+cd /path/to/big-wave
+grep -rn "channel" packages/cli/bin/cli.js | grep -v "channel.*dev\|dev.*channel\|channel = \|channel !=="
+```
+
+Expected: no unexpected uses.
 
 - [ ] **Step 8.2: Grep for stale `writeMovpConfig` references**
 
@@ -1617,7 +1689,46 @@ echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-1
 ls -la .movp/config.yaml && echo "OK: config.yaml created" || echo "FAIL: config.yaml missing"
 ```
 
-- [ ] **Step 8.6: Final commit if any cleanup was needed**
+- [ ] **Step 8.6: Smoke test — pre-release gate**
+
+```bash
+cd /path/to/big-wave/packages/cli
+# Temporarily edit package.json version to "1.1.0-beta.1"
+node bin/cli.js init
+# Expected: error message with "--channel=dev" and exit code 1
+echo "Exit: $?"
+
+node bin/cli.js init --channel=dev
+# Expected: "⚠ Channel: dev" banner, marketplace pinned to 'main', exit code 0
+```
+
+- [ ] **Step 8.7: BFF contract test — no `.movp/config.yaml` present**
+
+This step must be run against a real BFF instance (staging or local). It documents and locks down the BFF response shape when no config file exists.
+
+```bash
+# Delete .movp/config.yaml from smoke-test repo
+rm -f /tmp/smoke-test/.movp/config.yaml
+
+# Send a real tool-list request through MCP server to BFF
+cd /tmp/smoke-test
+echo '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' | \
+  MOVP_URL=https://staging.mostviableproduct.com MOVP_API_KEY=<real-key> \
+  node /path/to/big-wave/packages/mcp-server/index.js
+```
+
+**After running:** Record the actual BFF response (HTTP status + body shape) in a comment at the top of `mcp-server/test/mcp-server.test.js`:
+
+```js
+// BFF contract: when .movp/config.yaml is absent, BFF returns:
+// <fill in after first run — e.g. HTTP 200 with { config_source: "defaults", ... }
+//                                  OR HTTP 422 with { error: "config_missing", ... }>
+// MCP server must NOT block the request in either case (fail-open).
+```
+
+Then add a test that sends the same request and asserts the MCP server proceeds without blocking (the BFF response shape is asserted by the comment, not the test, since it requires a live BFF).
+
+- [ ] **Step 8.8: Final commit if any cleanup was needed**
 
 ```bash
 cd /path/to/big-wave
@@ -1639,4 +1750,6 @@ git commit -m "chore(cli): remove stale --no-rules / writeMovpConfig references"
 | Lazy config | Start MCP server in repo without .movp/ | config.yaml auto-created |
 | Fail-open | `chmod 000 .movp/` then send MCP request | Server continues, stderr warning |
 | MOVP_PROJECT_ROOT | `MOVP_PROJECT_ROOT=/tmp/smoke claude` | config.yaml created at specified path |
-| Pre-release tag | init with CLI version `1.1.0-beta.1` | marketplace pinned to `main` |
+| Pre-release gate (no flag) | init with CLI version `1.1.0-beta.1`, no `--channel=dev` | Exits with error referencing `--channel=dev` |
+| Pre-release gate (with flag) | init with CLI version `1.1.0-beta.1 --channel=dev` | `⚠ Channel: dev` banner, marketplace pinned to `main` |
+| BFF contract | Send MCP request with no config.yaml (staging BFF) | MCP forwards without blocking; BFF response shape documented in test file |

@@ -102,7 +102,17 @@ Calls `mergeJsonConfig(os.homedir(), snippet)` where `snippet.config_json` is:
 }
 ```
 
-Tag is derived from CLI `package.json` version as `"v" + version`. Pre-releases (versions containing `-`) use `"main"` — documented tradeoff; pre-releases are dev-only channels.
+Tag is derived from CLI `package.json` version as `"v" + version`. Pre-release versions (containing `-`) require `--channel=dev` to be passed to `movp init`. Without the flag, `init` exits with an error:
+
+    Error: pre-release CLI versions require --channel=dev to install.
+    This prevents accidentally pinning your MoVP plugin to the floating 'main' branch.
+    Re-run: npx @movp/cli@<version> init --channel=dev
+
+With `--channel=dev`, the tag is `"main"` and a loud warning banner is printed:
+
+    ⚠ Channel: dev — plugin pinned to 'main' (pre-release build, not for production use)
+
+`registerMarketplace()` itself is unchanged — it derives `tag = version.includes("-") ? "main" : "v" + version`. The gate lives in `runInit()`: check version before calling `registerMarketplace`.
 
 ### `migrateProjectScoped()` — new function in `bin/cli.js`
 
@@ -127,12 +137,16 @@ Add `extraKnownMarketplaces` and `enabledPlugins` as allow-listed merge keys. Se
 
 Unit tests: add cases mirroring existing `mergeJsonConfig` coverage for these new key types.
 
+### What's added to `runInit()`
+
+- `--channel=dev` flag — required when running `movp init` with a pre-release CLI version. Add to arg parsing in the `command === "init"` block; pass as `{ channel }` option to `runInit()`. Gate: if `version.includes("-")` and `channel !== "dev"`, exit with error (see pre-release pinning above). If `channel === "dev"`, print a loud `⚠ Channel: dev` banner before calling `registerMarketplace()`.
+
 ### What's removed from `runInit()`
 
 - `writeMovpConfig(cwd, noRules)` call (line 949)
 - `--no-rules` flag — no longer relevant; remove from arg parsing, help text, and all docs
 
-Grep before shipping: `--no-rules`, `noRules` across both repos and README.
+Grep before shipping: `--no-rules`, `noRules`, `--channel` across both repos and README.
 
 ### What's removed from `runInit()` Step 2 label
 
@@ -176,10 +190,17 @@ If neither yields a valid project root (no `.git` found, no env override), skip 
 
 ```
 [movp-mcp] Could not determine project root — skipping .movp/config.yaml creation.
-Set MOVP_PROJECT_ROOT to your project directory if needed.
+[movp-mcp] Run MoVP from a git checkout, or set MOVP_PROJECT_ROOT=/path/to/project
+[movp-mcp] before starting Claude to enable automatic config creation.
 ```
 
-Git root walk: start at `cwd`, check for `.git` using `fs.existsSync` (matches both a `.git` **directory** for normal repos and a `.git` **file** for worktrees — `existsSync` returns true for either), walk up one directory at a time, stop at `os.homedir()` or filesystem root. V1 does not run `git rev-parse`; the `existsSync` check is sufficient for the common cases.
+Git root detection uses two methods in order:
+
+1. **`execFileSync("git", ["rev-parse", "--show-toplevel"], ...)`** (primary) — uses `child_process.execFileSync` with an explicit argument array (no shell invocation, no injection surface). Options: `{ cwd: startDir, timeout: 500, encoding: "utf8" }`. If this succeeds, use the trimmed result as the project root. Correctly handles git worktrees, nested submodule layouts, and repos with non-standard structures.
+
+2. **`existsSync` walk** (fallback) — used when `execFileSync` throws (non-git directory, `git` not on PATH) or times out. Walk from `startDir` upward checking for a `.git` entry (matches both `.git` **directory** and `.git` **file** for worktrees), stopping at `os.homedir()` or filesystem root.
+
+This ensures worktrees and nested layouts resolve correctly while remaining safe in environments where `git` is unavailable.
 
 ### Check per request (no caching flag)
 
@@ -225,7 +246,12 @@ These fixture tests live in `packages/cli/test/project-config.test.js` and are r
 
 Fail open. If `ensureProjectConfig` throws (permissions error, full disk, invalid YAML during additive merge), log the error to stderr and proceed with the BFF request. Missing `.movp/config.yaml` is a degraded state — the BFF may serve defaults or return an error to the client, but the MCP server itself does not block the request. The stderr warning surfaces the issue.
 
-Note: whether the BFF truly serves defaults when `.movp/config.yaml` is absent is a server-side contract — verify during integration testing, not assumed here.
+**BFF contract when `.movp/config.yaml` is absent:** Before shipping, the BFF's behavior in this case must be verified and documented. Add a contract test in `packages/mcp-server/test/mcp-server.test.js` (Task 8, Step 8.7) that:
+1. Sends a minimal JSON-RPC request through the MCP server with no `.movp/config.yaml` present.
+2. Asserts the MCP server forwards the request without blocking.
+3. Documents and asserts the actual BFF response — either "serves config defaults" (HTTP 200 with a config payload) or "returns a structured error" — locking down the behavior so it cannot silently change.
+
+The test must be written against the real BFF (staging or local), not mocked. This closes the correctness gap identified in the adversarial review of the deferred scope.
 
 ```
 [movp-mcp] Warning: could not create .movp/config.yaml: EACCES: permission denied
@@ -249,6 +275,7 @@ In `claude-plugin/commands/status.md` (line 31):
 - Rewrite `runInit()`: remove `writeMovpConfig` call, add `registerMarketplace()` + `migrateProjectScoped()` calls, update step numbering and success messaging
 - Add `registerMarketplace()` function
 - Add `migrateProjectScoped()` function
+- Add `--channel=dev` flag to arg parsing; add pre-release gate in `runInit()` before calling `registerMarketplace()`; print `⚠ Channel: dev` banner when `--channel=dev` is active
 - Remove `--no-rules` flag from arg parsing and help text
 - Import `ensureProjectConfig` from `lib/project-config.js` (for any CLI code that still uses it, e.g. `--project` flag if added later)
 
@@ -272,13 +299,15 @@ In `claude-plugin/commands/status.md` (line 31):
 - Add inlined `ensureProjectConfig` (copied from `lib/project-config.js`) with sync comment: `// keep in sync with packages/cli/lib/project-config.js — last synced: v<version>`
 - Add inlined `DEFAULT_PROJECT_CONFIG` constant
 - Add `MOVP_PROJECT_ROOT` validation: absolute path, existing directory, `fs.realpathSync`; fail fast with clear stderr if invalid
-- Add git root walk: start at `cwd`, walk up to `os.homedir()`, stop at first `.git` found
+- Add git root detection: `execFileSync("git", ["rev-parse", "--show-toplevel"], ...)` primary; `existsSync` walk fallback
 - Call `ensureProjectConfig` when `config.yaml` is absent before forwarding each request; fail open on error
 - Update fail-open stderr copy: no reference to `npx @movp/cli init`
+- Update "no root" stderr to 3-line actionable message (run from git checkout or set `MOVP_PROJECT_ROOT`)
 
 ### `big-wave/packages/mcp-server/test/mcp-server.test.js` *(new or extend)*
 - Re-run golden-fixture contract tests against inlined `ensureProjectConfig` using shared test helper
-- Add project root resolution tests: valid env override, invalid env (bad path, not a directory), git root walk hits `.git`, no `.git` found (skip + log)
+- Add project root resolution tests: valid env override, invalid env (bad path, not a directory), `git rev-parse` succeeds, `git rev-parse` fails → fallback to `existsSync` walk, no `.git` found (skip + log)
+- Add BFF contract test: send minimal JSON-RPC with no `.movp/config.yaml`; assert MCP server forwards without blocking; document and assert actual BFF response shape
 
 ### `mona-lisa/claude-plugin/commands/status.md`
 - Update fallback messaging: distinguish `login` vs `init` based on what's missing
@@ -329,4 +358,20 @@ In `claude-plugin/commands/status.md` (line 31):
    MOVP_PROJECT_ROOT=/path/to/project claude
    # Run /movp status
    # Verify .movp/config.yaml created at /path/to/project/.movp/config.yaml
+   ```
+
+7. **Pre-release gate:**
+   ```
+   # Simulate pre-release CLI version by temporarily changing package.json version to "1.1.0-beta.1"
+   node bin/cli.js init
+   # Verify exits with error message referencing --channel=dev
+   node bin/cli.js init --channel=dev
+   # Verify "⚠ Channel: dev" banner printed, marketplace pinned to 'main'
+   ```
+
+8. **BFF contract (no .movp/config.yaml):**
+   ```
+   # Delete .movp/config.yaml, send JSON-RPC request via MCP server
+   # Verify MCP forwards request without blocking
+   # Document actual BFF response shape in this section after first run
    ```
