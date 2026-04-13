@@ -387,7 +387,7 @@ In `claude-plugin/commands/status.md` (line 31):
    node bin/cli.js init
    # Verify exits with error message referencing --channel=dev
    node bin/cli.js init --channel=dev
-   # Verify "⚠ Channel: dev" banner printed, marketplace pinned to 'main'
+   # Verify "⚠ Channel: dev" banner printed, marketplace pinned to 'next'
    ```
 
 8. **BFF contract (no .movp/config.yaml):**
