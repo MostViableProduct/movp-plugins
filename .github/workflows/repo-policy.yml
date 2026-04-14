@@ -1,9 +1,13 @@
 name: Repo Policy Check
 
 on:
-  schedule:
-    - cron: '0 9 * * 1'   # Monday 09:00 UTC
-  workflow_dispatch:        # allow manual trigger
+  # Run manually to verify protection is configured correctly.
+  # Once REQUIRED_CHECK_NAME in check-repo-policy.sh is confirmed (after
+  # validate.yml runs at least once and the branch rule is set), re-enable
+  # the schedule by uncommenting the lines below.
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 9 * * 1'   # Monday 09:00 UTC
 
 permissions:
   contents: read

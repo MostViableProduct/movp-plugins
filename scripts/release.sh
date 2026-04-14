@@ -182,14 +182,30 @@ EOF
 fi
 echo "  [PASS] Tag $TAG exists on remote"
 
+# Verify tarball URL with retry (GitHub can take a moment to generate archives)
 TARBALL_URL="https://github.com/MostViableProduct/movp-plugins/archive/$TAG.tar.gz"
-echo "  Checking tarball URL..."
-HTTP_STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$TARBALL_URL" 2>/dev/null || echo "000")
-if [[ "$HTTP_STATUS" != "200" && "$HTTP_STATUS" != "302" ]]; then
-  echo "  [WARN] Tarball URL returned HTTP $HTTP_STATUS — GitHub may need more time to generate it."
-  echo "  Verify manually: curl -sI $TARBALL_URL"
-else
-  echo "  [PASS] Tarball URL is reachable (HTTP $HTTP_STATUS)"
+echo "  Checking tarball URL (up to 3 attempts)..."
+TARBALL_OK=false
+for attempt in 1 2 3; do
+  HTTP_STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$TARBALL_URL" 2>/dev/null || echo "000")
+  if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "302" ]]; then
+    echo "  [PASS] Tarball URL is reachable (HTTP $HTTP_STATUS, attempt $attempt)"
+    TARBALL_OK=true
+    break
+  fi
+  [[ $attempt -lt 3 ]] && echo "  [WARN] Attempt $attempt: HTTP $HTTP_STATUS — retrying in 5s..." && sleep 5
+done
+
+if ! $TARBALL_OK; then
+  echo ""
+  echo "  [FAIL] Tarball URL not reachable after 3 attempts (last: HTTP $HTTP_STATUS)"
+  echo "  URL: $TARBALL_URL"
+  echo ""
+  echo "  GitHub may still be processing the archive. Verify before updating Homebrew:"
+  echo "    curl -sI $TARBALL_URL"
+  echo ""
+  echo "  ⚠️  Do NOT update the Homebrew formula until this URL returns 200."
+  exit 1
 fi
 
 # ── Step 8: Homebrew instructions ─────────────────────────────────────────────

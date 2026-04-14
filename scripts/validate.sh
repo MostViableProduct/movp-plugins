@@ -92,28 +92,40 @@ for f in "${PLUGIN_JSON_FILES[@]}"; do
     continue
   fi
 
-  # Required fields
-  for field in "${REQUIRED_FIELDS[@]}"; do
-    val=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('$field','') or d.get('author',{}).get('name','') if '$field'=='author.name' else d.get('$field',''))" 2>/dev/null)
-    # Handle nested author.name
-    if [[ "$field" == "license" ]]; then
-      val=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('license',''))" 2>/dev/null)
-    fi
-    if [[ -z "$val" ]]; then
-      fail "plugin.json schema: $f" "$f: missing required field '$field'" \
-        "Fix: add \"$field\": \"...\" to $f"
-      SCHEMA_OK=false
-    fi
-  done
+  # Required fields (including nested author.name) + semver — single python3 call per file
+  SCHEMA_ERRORS=$(python3 - "$f" <<'PYEOF'
+import json, re, sys
+path = sys.argv[1]
+d = json.load(open(path))
+for field in ['name', 'version', 'description', 'repository', 'license']:
+    if not d.get(field):
+        print(f'MISSING:{field}')
+if not (d.get('author') or {}).get('name'):
+    print('MISSING:author.name')
+ver = d.get('version', '')
+if not re.match(r'^[0-9]+\.[0-9]+\.[0-9]+$', ver):
+    print(f'BAD_VERSION:{ver}')
+PYEOF
+)
 
-  # Semver check
-  ver=$(python3 -c "import json; print(json.load(open('$f')).get('version',''))" 2>/dev/null)
-  if ! echo "$ver" | grep -qE "$SEMVER_PATTERN"; then
-    fail "plugin.json schema: $f" "$f: version '$ver' is not stable semver (x.y.z)" \
-      "Fix: use a version like 1.2.0 — no prerelease suffixes in released plugins"
-    SCHEMA_OK=false
+  if [[ -n "$SCHEMA_ERRORS" ]]; then
+    while IFS= read -r issue; do
+      [[ -z "$issue" ]] && continue
+      if [[ "$issue" == MISSING:* ]]; then
+        field="${issue#MISSING:}"
+        fail "plugin.json schema: $f" "$f: missing required field '$field'" \
+          "Fix: add the '$field' field to $f"
+        SCHEMA_OK=false
+      elif [[ "$issue" == BAD_VERSION:* ]]; then
+        ver="${issue#BAD_VERSION:}"
+        fail "plugin.json schema: $f" "$f: version '$ver' is not stable semver (x.y.z)" \
+          "Fix: use a version like 1.2.0 — no prerelease suffixes in released plugins"
+        SCHEMA_OK=false
+      fi
+    done <<< "$SCHEMA_ERRORS"
   fi
 
+  ver=$(python3 -c "import json; print(json.load(open('$f')).get('version',''))" 2>/dev/null)
   [[ -z "$PLUGIN_VERSION" ]] && PLUGIN_VERSION="$ver"
 done
 
@@ -316,31 +328,46 @@ for f in "${SCAN_FILES[@]}"; do
   [[ ! -f "$f" ]] && continue
   is_allowlisted "$f" && continue
 
+  # Collect all matching patterns for this file (one fail per file, all patterns listed)
+  MATCHED=()
   for pat in "${SECRET_PATTERNS[@]}"; do
-    if grep -qE "$pat" "$f" 2>/dev/null; then
-      fail "secret scan: $f" \
-        "Credential leak: $f matches pattern '$pat'" \
-        "Fix: remove credential from $f; if this is intentional (docs/examples), add $f to $ALLOWLIST_FILE"
-      SECRET_OK=false
-    fi
+    grep -qE "$pat" "$f" 2>/dev/null && MATCHED+=("$pat")
   done
+
+  if [[ ${#MATCHED[@]} -gt 0 ]]; then
+    pattern_list=$(printf "'%s' " "${MATCHED[@]}")
+    fail "secret scan: $f" \
+      "Credential leak: $f matches ${#MATCHED[@]} secret pattern(s): $pattern_list" \
+      "Fix: remove credential from $f; if intentional (docs/examples), add '$f' to $ALLOWLIST_FILE"
+    SECRET_OK=false
+  fi
 done
-$SECRET_OK && pass "secret scan (9 patterns)"
+$SECRET_OK && pass "secret scan"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 TOTAL=$((PASS + FAIL))
 
 if $JSON_MODE; then
+  _JSON_TMP=$(mktemp)
+  printf '%s\n' "${RESULTS[@]+"${RESULTS[@]}"}" > "$_JSON_TMP"
   echo ""
-  python3 -c "
+  python3 - "$PASS" "$FAIL" "$TOTAL" "$_JSON_TMP" <<'PYEOF'
 import json, sys
-results = []
-for r in $(printf '%s\n' "${RESULTS[@]+"${RESULTS[@]}"}" | python3 -c "import sys; lines=sys.stdin.read().strip().split('\n'); print(repr(lines))"):
-    parts = r.split('|', 2)
-    results.append({'check': parts[0], 'status': parts[1], 'detail': parts[2] if len(parts)>2 else ''})
-print(json.dumps({'pass': $PASS, 'fail': $FAIL, 'total': $TOTAL, 'checks': results}, indent=2))
-"
+pass_n, fail_n, total_n = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+with open(sys.argv[4]) as f:
+    lines = [l.rstrip('\n') for l in f if l.strip()]
+checks = []
+for line in lines:
+    parts = line.split('|', 2)
+    checks.append({
+        'check':  parts[0] if len(parts) > 0 else '',
+        'status': parts[1] if len(parts) > 1 else '',
+        'detail': parts[2] if len(parts) > 2 else ''
+    })
+print(json.dumps({'pass': pass_n, 'fail': fail_n, 'total': total_n, 'checks': checks}, indent=2))
+PYEOF
+  rm -f "$_JSON_TMP"
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
