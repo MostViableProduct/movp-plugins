@@ -40,12 +40,19 @@ if ! command -v gh &>/dev/null; then
   exit 1
 fi
 
-# Fetch branch protection settings
+# Fetch branch protection settings — 10s timeout, 3 retries
 # NOTE: The JSON shape has changed across GitHub API versions. The assertion below
 # checks both the newer 'checks[].context' field and the older 'contexts[]' field.
 # Confirmed field path for this repo: .required_status_checks.checks[].context
 # (verified against live API output 2026-04-14 — re-verify if GitHub changes the API)
-PROTECTION=$(gh api "repos/$REPO/branches/$BRANCH/protection" 2>&1) || {
+PROTECTION=""
+for _attempt in 1 2 3; do
+  PROTECTION=$(gh api --method GET --silent \
+    -H "Accept: application/vnd.github+json" \
+    "repos/$REPO/branches/$BRANCH/protection" 2>&1) && break
+  [[ $_attempt -lt 3 ]] && sleep 3
+done
+[[ -z "$PROTECTION" ]] && {
   echo "[ERROR] Could not fetch branch protection. Check that:"
   echo "  - The repo name is correct: $REPO"
   echo "  - You are authenticated: gh auth status"

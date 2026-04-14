@@ -6,7 +6,8 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# MOVP_VALIDATE_ROOT overrides working directory — used by test-validate.sh fixtures
+REPO_ROOT="${MOVP_VALIDATE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$REPO_ROOT"
 
 JSON_MODE=false
@@ -318,6 +319,36 @@ SECRET_PATTERNS=(
 )
 
 SECRET_OK=true
+
+# Validate allowlist format before scanning
+if [[ -f "$ALLOWLIST_FILE" ]]; then
+  prev_was_comment=false
+  lineno=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno+1))
+    [[ -z "$line" ]] && prev_was_comment=false && continue
+    if [[ "$line" == \#* ]]; then
+      prev_was_comment=true
+      continue
+    fi
+    # Path entry — must have a comment on the preceding line
+    if ! $prev_was_comment; then
+      fail "allowlist governance: $ALLOWLIST_FILE:$lineno" \
+        "$ALLOWLIST_FILE line $lineno: '$line' has no justification comment above it" \
+        "Fix: add '# owner: @you — reason: why this is safe' on the line before '$line'"
+      SECRET_OK=false
+    fi
+    # Reject broad patterns (directory prefixes, *.ext wildcards)
+    if [[ "$line" == */ || "$line" == \*.* ]]; then
+      fail "allowlist governance: $ALLOWLIST_FILE:$lineno" \
+        "$ALLOWLIST_FILE line $lineno: '$line' is a broad wildcard — use a specific file path" \
+        "Fix: allowlist specific files (e.g. docs/example.md), not directories or glob patterns"
+      SECRET_OK=false
+    fi
+    prev_was_comment=false
+  done < "$ALLOWLIST_FILE"
+fi
+
 # Build list of files to scan (non-gitignored, non-.example)
 SCAN_FILES=()
 while IFS= read -r f; do

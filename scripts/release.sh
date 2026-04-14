@@ -168,15 +168,18 @@ if [[ -z "$REMOTE_TAG" ]]; then
 
   To verify manually: git ls-remote --tags origin $TAG
 
-  To roll back (SAFE only if no one has pulled the tag yet):
+  Recommended recovery (safe for shared repos):
+    git revert HEAD        # creates a new undo commit
+    git push
+    git push origin --delete $TAG
+    git tag -d $TAG
+
+  Emergency only — destructive, confirm with team first:
+    (use ONLY if you are certain no one has pulled this tag)
     git tag -d $TAG
     git push origin --delete $TAG
     git reset --hard HEAD~1
     git push --force-with-lease
-
-  WARNING: If others may have pulled the tag, prefer:
-    git revert HEAD && git push
-    Then send an advisory before deleting the remote tag.
 EOF
   exit 1
 fi
