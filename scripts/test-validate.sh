@@ -113,11 +113,11 @@ build_fixture() {
   # scripts/ — symlink validate.sh so CHECK 8 finds an executable script
   mkdir -p "$dir/scripts"
   ln -sf "$VALIDATE" "$dir/scripts/validate.sh"
-  # Minimal allowlist with proper format
+  # Minimal allowlist with proper format (# owner: @handle — reason: ...)
   cat > "$dir/scripts/SECRET_SCAN_ALLOWLIST" <<'EOF'
-# This file is always allowlisted (contains scan patterns as examples)
+# owner: @pipeline — reason: this file is the allowlist itself; entries are path strings not credentials
 scripts/SECRET_SCAN_ALLOWLIST
-# validate.sh contains pattern literals used in grep calls
+# owner: @pipeline — reason: validate.sh contains literal scan pattern strings used in grep calls
 scripts/validate.sh
 EOF
 

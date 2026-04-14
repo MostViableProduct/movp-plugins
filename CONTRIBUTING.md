@@ -33,6 +33,28 @@ For machine-readable output (CI tooling, scripting):
 bash scripts/validate.sh --json
 ```
 
+The `--json` output schema (printed to stdout after normal `[PASS]`/`[FAIL]` lines):
+
+```json
+{
+  "pass": 9,
+  "fail": 0,
+  "total": 9,
+  "checks": [
+    { "check": "SKILL sync: movp-review claude vs cursor", "status": "pass", "detail": "" },
+    { "check": "secret scan: leaked.txt",                  "status": "fail", "detail": "Credential leak: leaked.txt matches 1 secret pattern(s): 'WORKDESK_API_KEY=...'" }
+  ]
+}
+```
+
+Fields:
+- `pass` / `fail` / `total` — integer counts
+- `checks[].check` — internal check identifier (stable across runs for the same failure)
+- `checks[].status` — `"pass"` or `"fail"`
+- `checks[].detail` — human-readable failure message (empty string on pass)
+
+The schema is stable for the current check set. Adding new checks appends new entries; `check` identifiers may change if checks are renamed.
+
 ---
 
 ## Release process

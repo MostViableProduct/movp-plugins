@@ -56,6 +56,34 @@ if [[ $(git status --porcelain | wc -l | tr -d ' ') -gt 0 ]]; then
   exit 1
 fi
 
+# ── Step 2b: Branch and sync preflight (execute mode only) ────────────────────
+
+if ! $DRY_RUN; then
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  if [[ "$CURRENT_BRANCH" != "main" ]]; then
+    echo ""
+    echo "[BLOCKED] Releases must be cut from main (currently on '$CURRENT_BRANCH')."
+    echo "  Switch: git checkout main"
+    exit 1
+  fi
+
+  echo ""
+  echo "=== Syncing with origin/main ==="
+  git fetch origin main --quiet
+  LOCAL=$(git rev-parse HEAD)
+  REMOTE=$(git rev-parse origin/main)
+  if [[ "$LOCAL" != "$REMOTE" ]]; then
+    AHEAD=$(git rev-list origin/main..HEAD --count 2>/dev/null || echo "?")
+    BEHIND=$(git rev-list HEAD..origin/main --count 2>/dev/null || echo "?")
+    echo ""
+    echo "[BLOCKED] Local main is not in sync with origin/main."
+    echo "  Ahead by $AHEAD commit(s), behind by $BEHIND commit(s)."
+    echo "  Fix: git pull --rebase origin main   (or push pending commits first)"
+    exit 1
+  fi
+  echo "  Local main is in sync with origin."
+fi
+
 # ── Step 3: Preview version changes ──────────────────────────────────────────
 
 PLUGIN_JSON_FILES=(

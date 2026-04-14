@@ -29,13 +29,20 @@ if [[ -z "$MOVP_VERSION" ]]; then
   else
     TAG_PATTERN='refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$'
   fi
-  MOVP_VERSION=$(git ls-remote --tags --sort=-version:refname "$MOVP_REPO" 2>/dev/null \
+
+  # Use `timeout` when available to cap worst-case hang on bad networks (~75s TCP default otherwise)
+  _ls_remote() {
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 15 git ls-remote "$@"
+    else
+      git ls-remote "$@"
+    fi
+  }
+
+  MOVP_VERSION=$(_ls_remote --tags --sort=-version:refname "$MOVP_REPO" 2>/dev/null \
     | grep -E "$TAG_PATTERN" \
     | head -1 \
     | sed 's|.*refs/tags/||') || true
-  # git ls-remote can hang on network issues; apply a timeout via a background subshell if needed.
-  # The above relies on the OS-level TCP timeout (~75s). For stricter control, callers can
-  # wrap with: timeout 15 bash install.sh
 
   if [[ -z "$MOVP_VERSION" ]]; then
     echo "Error: no stable release tags found in $MOVP_REPO."

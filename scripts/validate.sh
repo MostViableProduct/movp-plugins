@@ -321,21 +321,30 @@ SECRET_PATTERNS=(
 SECRET_OK=true
 
 # Validate allowlist format before scanning
+# Required justification format: # owner: @handle — reason: <why safe>
+# Any preceding comment line not matching this format is rejected so that
+# placeholder comments (# TODO, # temp) cannot silently bypass the check.
+JUSTIFICATION_PATTERN='^# owner: @[A-Za-z0-9_-].* reason: .+'
 if [[ -f "$ALLOWLIST_FILE" ]]; then
-  prev_was_comment=false
+  prev_comment=""
   lineno=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     lineno=$((lineno+1))
-    [[ -z "$line" ]] && prev_was_comment=false && continue
+    [[ -z "$line" ]] && prev_comment="" && continue
     if [[ "$line" == \#* ]]; then
-      prev_was_comment=true
+      prev_comment="$line"
       continue
     fi
-    # Path entry — must have a comment on the preceding line
-    if ! $prev_was_comment; then
+    # Path entry — preceding comment must match the justification format
+    if [[ -z "$prev_comment" ]]; then
       fail "allowlist governance: $ALLOWLIST_FILE:$lineno" \
         "$ALLOWLIST_FILE line $lineno: '$line' has no justification comment above it" \
         "Fix: add '# owner: @you — reason: why this is safe' on the line before '$line'"
+      SECRET_OK=false
+    elif ! echo "$prev_comment" | grep -qE "$JUSTIFICATION_PATTERN"; then
+      fail "allowlist governance: $ALLOWLIST_FILE:$lineno" \
+        "$ALLOWLIST_FILE line $lineno: comment '$prev_comment' does not match required format" \
+        "Fix: use '# owner: @handle — reason: <why safe>' (e.g. '# owner: @you — reason: example tokens only')"
       SECRET_OK=false
     fi
     # Reject broad patterns (directory prefixes, *.ext wildcards)
@@ -345,7 +354,7 @@ if [[ -f "$ALLOWLIST_FILE" ]]; then
         "Fix: allowlist specific files (e.g. docs/example.md), not directories or glob patterns"
       SECRET_OK=false
     fi
-    prev_was_comment=false
+    prev_comment=""
   done < "$ALLOWLIST_FILE"
 fi
 
