@@ -39,6 +39,19 @@ Do **not** trigger for: reading files, running tests, git commands, grep/search,
 4. Call resolve_review(review_id=<id>, action="accept"|"dismiss"|"escalate"|"retry") based on their choice
 ```
 
+## Do not pre-flight-check tool availability
+
+**Call `trigger_review` directly. Do NOT:**
+
+- Run `movp:status` before triggering a review
+- Call `listMcpResources` to verify tools exist
+- Read `movp://movp/registry` to confirm tool registration
+- Conclude tools are unavailable based on resource listings
+
+MCP tools and MCP resources are separate. Tools appear in the session's deferred tool list, not in resource listings. If `trigger_review` fails, report the error to the developer — do not substitute a manual or simulated review.
+
+**Never fabricate a review.** If the tool call fails, stop and report the error.
+
 ## Presenting findings
 
 Format findings as structured output with severity badges. After showing findings, always ask:

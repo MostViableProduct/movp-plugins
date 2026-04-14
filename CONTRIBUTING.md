@@ -17,6 +17,55 @@ Each plugin directory is self-contained and independently installable. Claude Co
 
 ---
 
+## Running validation locally
+
+Before opening a PR, run:
+
+```bash
+bash scripts/validate.sh
+```
+
+This runs all 9 checks: SKILL.md sync, plugin.json schema and version consistency, marketplace.json alignment, frontmatter validity, command completeness, required files, executable bits, and secret scan. Fix any failures before pushing.
+
+For machine-readable output (CI tooling, scripting):
+
+```bash
+bash scripts/validate.sh --json
+```
+
+---
+
+## Release process
+
+```
+1. Make all changes. Open a PR. Wait for the validate CI job to pass.
+2. Merge to main.
+3. Preview the release:
+     ./scripts/release.sh --dry-run 1.2.0
+4. Apply the release (bumps all versions, commits, tags, pushes, verifies):
+     ./scripts/release.sh --execute 1.2.0
+5. Update the Homebrew formula in MostViableProduct/homebrew-movp
+   with the url and sha256 printed by release.sh.
+```
+
+All three plugin.json files and marketplace.json always share the same version. Never bump them independently — use `release.sh`.
+
+---
+
+## Governance
+
+Branch protection on `main` requires the `validate` CI job to pass before merge. To verify protection is correctly configured:
+
+```bash
+bash scripts/check-repo-policy.sh
+```
+
+This also runs weekly via `.github/workflows/repo-policy.yml` to catch accidental drift in repo settings.
+
+After enabling branch protection for the first time, confirm the exact required check name in Settings → Branches → edit main rule, then update `REQUIRED_CHECK_NAME` in `scripts/check-repo-policy.sh` to match.
+
+---
+
 ## Dogfooding
 
 Load the Claude Code plugin locally to test changes:

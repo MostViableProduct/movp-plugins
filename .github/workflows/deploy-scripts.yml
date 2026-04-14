@@ -2,16 +2,27 @@ name: Deploy install scripts to get.movp.dev
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'scripts/**'
-
-  # Allow manual trigger from the Actions tab
   workflow_dispatch:
 
+concurrency:
+  group: deploy-scripts
+  cancel-in-progress: false   # queues the next run; does NOT cancel it — in-flight deploy completes first
+
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run validation
+        run: bash scripts/validate.sh
+
   deploy:
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: read

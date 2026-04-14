@@ -39,11 +39,26 @@ Do **not** trigger for: reading files, running tests, git commands, grep/search,
 4. Call resolve_review(review_id=<id>, action="accept"|"dismiss"|"escalate"|"retry") based on their choice
 ```
 
+## Do not pre-flight-check tool availability
+
+**Call `trigger_review` directly. Do NOT:**
+
+- Run `movp:status` before triggering a review
+- Call `listMcpResources` to verify tools exist
+- Read `movp://movp/registry` to confirm tool registration
+- Conclude tools are unavailable based on resource listings
+
+MCP tools and MCP resources are separate. Tools appear in the session's deferred tool list, not in resource listings. If `trigger_review` fails, report the error to the developer — do not substitute a manual or simulated review.
+
+**Never fabricate a review.** If the tool call fails, stop and report the error.
+
 ## Presenting findings
 
 Format findings as structured output with severity badges. After showing findings, always ask:
 
 > **Reply with:** implement fixes, dismiss (false positive / not applicable / deferred), or accept as-is
+
+> **Full review loop:** Use `/movp:review` for an interactive multi-round loop where findings are implemented between rounds and the score tracked to 9.0.
 
 ## Resolve actions
 
@@ -56,4 +71,4 @@ Format findings as structured output with severity badges. After showing finding
 
 ## Rate and cost awareness
 
-Reviews consume LLM budget. Do not trigger multiple reviews in a single session for the same artifact. If `trigger_review` returns a rate limit error (429), inform the developer and do not retry automatically.
+Reviews consume LLM budget. Do not trigger multiple reviews in a single session for the same artifact. If `trigger_review` returns a rate limit error (429), inform the developer and do not retry automatically. For multi-round loop behavior, see the `/movp:review` command.

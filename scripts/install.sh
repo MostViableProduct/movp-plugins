@@ -9,16 +9,40 @@ MOVP_VERSION="${MOVP_VERSION:-}"
 MOVP_INSTALL_DIR="${MOVP_INSTALL_DIR:-$HOME/.movp/plugins}"
 MOVP_TOOL="${MOVP_TOOL:-}"
 MOVP_REPO="https://github.com/MostViableProduct/movp-plugins"
+MOVP_ALLOW_PRERELEASE=false
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir)    MOVP_INSTALL_DIR="$2"; shift 2 ;;
-    --tool)   MOVP_TOOL="$2"; shift 2 ;;
-    --version) MOVP_VERSION="$2"; shift 2 ;;
+    --dir)              MOVP_INSTALL_DIR="$2"; shift 2 ;;
+    --tool)             MOVP_TOOL="$2"; shift 2 ;;
+    --version)          MOVP_VERSION="$2"; shift 2 ;;
+    --allow-prerelease) MOVP_ALLOW_PRERELEASE=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Resolve version: default to latest stable semver tag (not main)
+if [[ -z "$MOVP_VERSION" ]]; then
+  if $MOVP_ALLOW_PRERELEASE; then
+    TAG_PATTERN='refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*'
+  else
+    TAG_PATTERN='refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$'
+  fi
+  MOVP_VERSION=$(git ls-remote --tags --sort=-version:refname "$MOVP_REPO" \
+    | grep -E "$TAG_PATTERN" \
+    | head -1 \
+    | sed 's|.*refs/tags/||') || true
+
+  if [[ -z "$MOVP_VERSION" ]]; then
+    echo "Error: no stable release tags found in $MOVP_REPO."
+    echo "  To install from main (development, not recommended for production):"
+    echo "    $0 --version main"
+    echo "  To include prerelease tags:"
+    echo "    $0 --allow-prerelease"
+    exit 1
+  fi
+fi
 
 # Color output (suppressed when NO_COLOR is set or stdout is not a tty)
 if [[ -z "${NO_COLOR:-}" ]] && [[ -t 1 ]]; then

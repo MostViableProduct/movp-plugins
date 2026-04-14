@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "movp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MoVP plugins for Claude Code",
   "owner": {
     "name": "MoVP",
@@ -12,7 +12,7 @@
       "name": "movp",
       "source": "./claude-plugin",
       "description": "MoVP control plane — adversarial review, health scores, recommendations, and constraint checks",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": { "name": "MoVP" }
     }
   ]

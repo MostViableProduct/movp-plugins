@@ -5,14 +5,38 @@
 # Requires: PowerShell 5.1+ (ships with Windows 10/11), Node.js 18+, git
 
 param(
-    [string]$Dir     = "$env:USERPROFILE\.movp\plugins",
-    [string]$Tool    = "",
-    [string]$Version = ""
+    [string]$Dir             = "$env:USERPROFILE\.movp\plugins",
+    [string]$Tool            = "",
+    [string]$Version         = "",
+    [switch]$AllowPrerelease = $false
 )
 
 $ErrorActionPreference = 'Stop'
 
 $Repo = "https://github.com/MostViableProduct/movp-plugins"
+
+# Resolve version: default to latest stable semver tag (not main)
+if (-not $Version) {
+    $tagPattern = if ($AllowPrerelease) {
+        'refs/tags/v\d+\.\d+\.\d+'
+    } else {
+        'refs/tags/v\d+\.\d+\.\d+$'
+    }
+    $rawTags = & git ls-remote --tags --sort=-version:refname $Repo 2>$null
+    $Version = ($rawTags | Select-String -Pattern $tagPattern | Select-Object -First 1 |
+        ForEach-Object { $_ -replace '.*refs/tags/', '' })
+
+    if (-not $Version) {
+        Write-Error @"
+Error: no stable release tags found in $Repo.
+  To install from main (development, not recommended for production):
+    .\install.ps1 -Version main
+  To include prerelease tags:
+    .\install.ps1 -AllowPrerelease
+"@
+        exit 1
+    }
+}
 
 Write-Host "Installing MoVP plugins$(if ($Version) { " ($Version)" })..." -ForegroundColor White
 
