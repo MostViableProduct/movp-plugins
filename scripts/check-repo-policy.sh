@@ -40,17 +40,35 @@ if ! command -v gh &>/dev/null; then
   exit 1
 fi
 
-# Fetch branch protection settings — 10s timeout, 3 retries
+# Fetch branch protection settings — 3 retries on 5xx/rate-limit only.
 # NOTE: The JSON shape has changed across GitHub API versions. The assertion below
 # checks both the newer 'checks[].context' field and the older 'contexts[]' field.
 # Confirmed field path for this repo: .required_status_checks.checks[].context
 # (verified against live API output 2026-04-14 — re-verify if GitHub changes the API)
+#
+# 4xx errors (401 Unauthorized, 403 Forbidden, 404 Not Found) are NOT retried —
+# they indicate configuration problems that retrying cannot fix.
 PROTECTION=""
 for _attempt in 1 2 3; do
-  PROTECTION=$(gh api --method GET --silent \
+  # Capture HTTP status alongside body so we can gate retries correctly
+  _raw=$(gh api --method GET --include \
     -H "Accept: application/vnd.github+json" \
-    "repos/$REPO/branches/$BRANCH/protection" 2>&1) && break
-  [[ $_attempt -lt 3 ]] && sleep 3
+    "repos/$REPO/branches/$BRANCH/protection" 2>&1)
+  _status=$(echo "$_raw" | grep -m1 '^HTTP' | awk '{print $2}')
+  if [[ "$_status" == "200" ]]; then
+    # Strip headers — body starts after the blank line
+    PROTECTION=$(echo "$_raw" | sed '1,/^[[:space:]]*$/d')
+    break
+  fi
+  # Retry on 5xx or 429 (rate limit); bail immediately on any 4xx
+  if [[ "$_status" =~ ^4 && "$_status" != "429" ]]; then
+    echo "[ERROR] gh api returned HTTP $_status — this is a configuration error, not a transient failure."
+    echo "  Check: gh auth status  (are you authenticated?)"
+    echo "  Check: does the protection rule exist?  https://github.com/$REPO/settings/branches"
+    echo "  Raw output: $(echo "$_raw" | tail -5)"
+    exit 1
+  fi
+  [[ $_attempt -lt 3 ]] && echo "[WARN] gh api attempt $_attempt failed (HTTP $_status) — retrying in 3s..." && sleep 3
 done
 [[ -z "$PROTECTION" ]] && {
   echo "[ERROR] Could not fetch branch protection. Check that:"
