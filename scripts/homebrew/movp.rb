@@ -1,8 +1,8 @@
 class Movp < Formula
   desc "MoVP control plane plugins for AI coding tools"
   homepage "https://github.com/MostViableProduct/movp-plugins"
-  url "https://github.com/MostViableProduct/movp-plugins/archive/v1.0.0.tar.gz"
-  sha256 "e50a48d4f0d214099777b1834f9f77698a2a9066884ba104d92883439da0a996"
+  url "https://github.com/MostViableProduct/movp-plugins/archive/v1.1.0.tar.gz"
+  sha256 "ec71367eaf0caa8e323951b120809f24c39313889a40c2bbdb5887df1c74e998"
   license "MIT"
 
   depends_on "node@18"
