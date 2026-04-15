@@ -1,0 +1,88 @@
+name: Plugin install smoke test
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install plugins from tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/install.sh --dir /tmp/movp-test --version "$TAG"
+
+      - name: Verify installed plugins
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PASS=0
+          FAIL=0
+          RESULTS=()
+
+          check_pass() { echo "[PASS] $1"; PASS=$((PASS+1)); RESULTS+=("$1|pass|"); }
+          check_fail() { echo "[FAIL] $1 — $2"; FAIL=$((FAIL+1)); RESULTS+=("$1|fail|$2"); }
+
+          for platform in claude cursor codex; do
+            plugin_dir="/tmp/movp-test/${platform}-plugin"
+            manifest="$plugin_dir/.${platform}-plugin/plugin.json"
+
+            if [[ ! -d "$plugin_dir" ]]; then
+              check_fail "${platform}-plugin directory" "not found at $plugin_dir"
+              continue
+            fi
+
+            if [[ ! -f "$manifest" ]]; then
+              check_fail "${platform}-plugin plugin.json" "not found at $manifest"
+              continue
+            fi
+
+            installed_version=$(python3 -c "import json; print(json.load(open('$manifest')).get('version',''))" 2>/dev/null || echo "")
+            if [[ "$installed_version" != "$VERSION" ]]; then
+              check_fail "${platform}-plugin version" "expected $VERSION, got $installed_version"
+            else
+              check_pass "${platform}-plugin version matches tag ($VERSION)"
+            fi
+
+            if [[ ! -d "$plugin_dir/skills" ]]; then
+              check_fail "${platform}-plugin skills/" "directory missing"
+            else
+              check_pass "${platform}-plugin skills/ present"
+            fi
+          done
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "## Plugin Smoke Test — $TAG"
+              echo ""
+              echo "| Plugin | Status | Detail |"
+              echo "|---|---|---|"
+              for r in "${RESULTS[@]+"${RESULTS[@]}"}"; do
+                IFS='|' read -r check status detail <<< "$r"
+                icon=$( [[ "$status" == "pass" ]] && echo "✅" || echo "❌" )
+                echo "| $check | $icon | $detail |"
+              done
+              echo ""
+              if [[ $FAIL -gt 0 ]]; then
+                echo "**$FAIL of $((PASS+FAIL)) checks failed.**"
+              else
+                echo "**All $PASS checks passed.**"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo ""
+          if [[ $FAIL -gt 0 ]]; then
+            echo "$FAIL of $((PASS+FAIL)) smoke checks failed."
+            exit 1
+          else
+            echo "All $PASS smoke checks passed."
+          fi

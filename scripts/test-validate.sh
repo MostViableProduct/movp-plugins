@@ -317,6 +317,38 @@ output_clean=$(echo "$output" | grep -v '^EXIT:')
 assert_exit_code "allowlist governance: exits 1" 1 "$exit_code"
 assert_contains "allowlist governance: justification message" "justification comment" "$output_clean"
 
+# ── TEST 9: CHECK 7 — missing plugin top-level directory ─────────────────────
+
+echo ""
+echo "=== TEST 9: CHECK 7 — missing plugin directory ==="
+FIXTURE=$(build_fixture)
+rm -rf "$FIXTURE/cursor-plugin"
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "remove cursor-plugin"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 7 missing plugin dir: exits 1" 1 "$exit_code"
+assert_contains "CHECK 7 missing plugin dir: names platform" "cursor-plugin" "$output_clean"
+assert_contains "CHECK 7 missing plugin dir: says missing directory" "missing directory" "$output_clean"
+
+# ── TEST 10: CHECK 7 — missing skills directory ───────────────────────────────
+
+echo ""
+echo "=== TEST 10: CHECK 7 — missing skills directory ==="
+FIXTURE=$(build_fixture)
+rm -rf "$FIXTURE/claude-plugin/skills"
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "remove skills dir"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 7 missing skills dir: exits 1" 1 "$exit_code"
+assert_contains "CHECK 7 missing skills dir: names platform" "claude-plugin" "$output_clean"
+assert_contains "CHECK 7 missing skills dir: names dir" "skills" "$output_clean"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""

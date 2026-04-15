@@ -136,7 +136,7 @@ $SCHEMA_OK && pass "plugin.json schema (all three)"
 
 VERSIONS=()
 for f in "${PLUGIN_JSON_FILES[@]}"; do
-  v=$(python3 -c "import json; print(json.load(open('$f')).get('version',''))" 2>/dev/null)
+  v=$(python3 -c "import json; print(json.load(open('$f')).get('version',''))" 2>/dev/null || echo "")
   VERSIONS+=("$v")
 done
 
@@ -260,11 +260,30 @@ if [[ "$actual_count" -gt "$expected_count" ]]; then
 fi
 $CMD_OK && pass "command file completeness"
 
-# ── CHECK 7: required files per plugin ───────────────────────────────────────
+# ── CHECK 7: required directories and files per plugin ───────────────────────
+# Directory checks run first so a missing dir produces a clear "missing directory"
+# error rather than cascading "file not found" errors for every file inside it.
 
 FILES_OK=true
 for platform in claude cursor codex; do
-  manifest_dir="${platform}-plugin/.${platform}-plugin"
+  required_dirs=(
+    "${platform}-plugin"
+    "${platform}-plugin/.${platform}-plugin"
+    "${platform}-plugin/skills"
+    "${platform}-plugin/skills/movp-review"
+    "${platform}-plugin/skills/movp-control-plane"
+  )
+  [[ "$platform" == "claude" ]] && required_dirs+=("claude-plugin/commands")
+
+  for d in "${required_dirs[@]}"; do
+    if [[ ! -d "$d" ]]; then
+      fail "required files: $platform" \
+        "${platform}-plugin: missing directory '$d'" \
+        "Fix: create $d/"
+      FILES_OK=false
+    fi
+  done
+
   required_files=(
     "${platform}-plugin/.${platform}-plugin/plugin.json"
     "${platform}-plugin/skills/movp-review/SKILL.md"
