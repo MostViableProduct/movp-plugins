@@ -108,15 +108,22 @@ else:
   echo "  $f: $current → $VERSION"
 done
 
+FORMULA_FILE="scripts/homebrew/movp.rb"
+if [[ -f "$FORMULA_FILE" ]]; then
+  CURRENT_FORMULA_VER=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' "$FORMULA_FILE" | head -1 | sed 's/^v//' || echo "?")
+  echo "  $FORMULA_FILE: url $CURRENT_FORMULA_VER → $VERSION (sha256 updated in tap via Step 9)"
+fi
+
 echo ""
 echo "  git commit: chore: release $TAG"
 echo "  git tag:    $TAG"
 
 if $DRY_RUN; then
   echo ""
-  echo "=== Homebrew update (after pushing tag) ==="
-  echo "  URL:    https://github.com/MostViableProduct/movp-plugins/archive/$TAG.tar.gz"
-  echo "  SHA256: <run after tag is pushed: curl -sL https://github.com/MostViableProduct/movp-plugins/archive/$TAG.tar.gz | shasum -a 256>"
+  echo "=== Homebrew tap update (Step 9, after tag push) ==="
+  echo "  Tap:    MostViableProduct/homebrew-movp"
+  echo "  url    \"https://github.com/MostViableProduct/movp-plugins/archive/$TAG.tar.gz\""
+  echo "  sha256  <computed from tarball after tag exists>"
   echo ""
   echo "[DRY RUN] No changes made. Re-run with --execute to apply."
   exit 0
@@ -154,11 +161,19 @@ with open('$MKT_FILE', 'w') as fh:
 "
 echo "  Updated $MKT_FILE"
 
+# Update formula url to new version (sha256 stays PLACEHOLDER; Step 9 pushes real SHA to tap)
+if [[ -f "$FORMULA_FILE" ]]; then
+  sed -i.bak -E "s|(archive/)v[0-9]+\.[0-9]+\.[0-9]+(\.tar\.gz)|\1$TAG\2|" "$FORMULA_FILE"
+  rm -f "${FORMULA_FILE}.bak"
+  echo "  Updated $FORMULA_FILE (url → $TAG)"
+fi
+
 # ── Step 5: Commit and tag ─────────────────────────────────────────────────────
 
 echo ""
 echo "=== Committing ==="
 git add "${PLUGIN_JSON_FILES[@]}" "$MKT_FILE"
+[[ -f "$FORMULA_FILE" ]] && git add "$FORMULA_FILE"
 git commit -m "chore: release $TAG"
 git tag "$TAG"
 echo "  Committed and tagged $TAG"
@@ -239,20 +254,79 @@ if ! $TARBALL_OK; then
   exit 1
 fi
 
-# ── Step 8: Homebrew instructions ─────────────────────────────────────────────
+# ── Step 8: Compute Homebrew SHA256 ───────────────────────────────────────────
 
 echo ""
 echo "=== Computing Homebrew SHA256 ==="
 SHA256=$(curl -sL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}')
+echo "  SHA256: $SHA256"
 
-cat <<EOF
+# ── Step 9: Push updated formula to homebrew-movp tap ─────────────────────────
 
-[PASS] Release $TAG complete.
+TAP_REPO="MostViableProduct/homebrew-movp"
+TAP_FORMULA="Formula/movp.rb"
 
-Update Homebrew formula in MostViableProduct/homebrew-movp:
-  url    "https://github.com/MostViableProduct/movp-plugins/archive/$TAG.tar.gz"
-  sha256 "$SHA256"
+echo ""
+echo "=== Updating Homebrew tap ($TAP_REPO) ==="
 
-To verify SHA256 locally:
-  curl -sL $TARBALL_URL | shasum -a 256
-EOF
+_tap_manual_instructions() {
+  echo "  Manual update required:"
+  echo "    https://github.com/$TAP_REPO/blob/main/$TAP_FORMULA"
+  echo "    url    \"$TARBALL_URL\""
+  echo "    sha256 \"$SHA256\""
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "  [SKIP] gh CLI not found — update tap manually"
+  _tap_manual_instructions
+elif ! gh auth status >/dev/null 2>&1; then
+  echo "  [SKIP] gh CLI not authenticated — update tap manually"
+  _tap_manual_instructions
+else
+  TAP_API_RESPONSE=$(gh api "repos/$TAP_REPO/contents/$TAP_FORMULA" 2>/dev/null || echo "")
+
+  if [[ -z "$TAP_API_RESPONSE" ]]; then
+    echo "  [WARN] Could not read tap formula (repo may be private or path may differ)"
+    _tap_manual_instructions
+  else
+    EXISTING_VERSION=$(echo "$TAP_API_RESPONSE" | python3 -c "
+import json, sys, base64, re
+d = json.load(sys.stdin)
+content = base64.b64decode(d['content']).decode()
+m = re.search(r'v([0-9]+\.[0-9]+\.[0-9]+)', content)
+print(m.group(1) if m else '')
+" 2>/dev/null || echo "")
+
+    if [[ "$EXISTING_VERSION" == "$VERSION" ]]; then
+      echo "  [SKIP] Tap already at $TAG — no update needed"
+    else
+      TAP_FILE_SHA=$(echo "$TAP_API_RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null || echo "")
+
+      # Build new formula content from local template, substituting url and sha256
+      NEW_CONTENT=$(sed -E \
+        -e "s|(archive/)v[0-9]+\.[0-9]+\.[0-9]+(\.tar\.gz)|\1$TAG\2|" \
+        -e "s|sha256 \"[^\"]*\"|sha256 \"$SHA256\"|" \
+        "$FORMULA_FILE")
+      ENCODED=$(echo "$NEW_CONTENT" | python3 -c "
+import sys, base64
+print(base64.b64encode(sys.stdin.buffer.read()).decode())
+")
+
+      if gh api --method PUT "repos/$TAP_REPO/contents/$TAP_FORMULA" \
+          --field message="chore: release $TAG" \
+          --field content="$ENCODED" \
+          --field sha="$TAP_FILE_SHA" > /dev/null 2>&1; then
+        echo "  [PASS] Tap updated: $TAP_REPO/$TAP_FORMULA → $TAG"
+      else
+        echo "  [FAIL] gh api PUT failed (check token has write access to $TAP_REPO)"
+        _tap_manual_instructions
+      fi
+    fi
+  fi
+fi
+
+echo ""
+echo "[PASS] Release $TAG complete."
+echo ""
+echo "To verify SHA256 locally:"
+echo "  curl -sL $TARBALL_URL | shasum -a 256"

@@ -403,6 +403,74 @@ for f in "${SCAN_FILES[@]}"; do
 done
 $SECRET_OK && pass "secret scan"
 
+# ── CHECK 10: Homebrew formula consistency ────────────────────────────────────
+# Verifies scripts/homebrew/movp.rb url and homepage reference the same GitHub
+# owner/repo as plugin.json's 'repository' field, and the url version matches
+# the current plugin version.
+# sha256 is NOT checked — the local file is a non-authoritative template;
+# the tap repo (MostViableProduct/homebrew-movp) owns the published formula.
+
+FORMULA_FILE="scripts/homebrew/movp.rb"
+BREW_OK=true
+
+if [[ ! -f "$FORMULA_FILE" ]]; then
+  fail "homebrew formula" \
+    "$FORMULA_FILE not found" \
+    "Fix: ensure $FORMULA_FILE exists (sha256 PLACEHOLDER is fine between releases)"
+  BREW_OK=false
+else
+  # Extract expected owner/repo from plugin.json's repository field
+  EXPECTED_SLUG=$(python3 -c "
+import json, re
+d = json.load(open('claude-plugin/.claude-plugin/plugin.json'))
+repo = d.get('repository', '')
+m = re.match(r'https://github\.com/([^/]+/[^/]+)', repo)
+if m:
+    slug = m.group(1)
+    print(slug[:-4] if slug.endswith('.git') else slug)
+" 2>/dev/null || echo "")
+
+  if [[ -z "$EXPECTED_SLUG" ]]; then
+    fail "homebrew formula: expected repo" \
+      "Could not extract owner/repo from plugin.json 'repository' field" \
+      "Fix: set 'repository' in claude-plugin/.claude-plugin/plugin.json to a full GitHub URL"
+    BREW_OK=false
+  else
+    FORMULA_URL_LINE=$(grep -E '^\s+url\s+' "$FORMULA_FILE" | head -1 || echo "")
+    FORMULA_HP_LINE=$(grep -E '^\s+homepage\s+' "$FORMULA_FILE" | head -1 || echo "")
+
+    if ! echo "$FORMULA_URL_LINE" | grep -qF "$EXPECTED_SLUG"; then
+      fail "homebrew formula: url repo" \
+        "$FORMULA_FILE: url does not reference $EXPECTED_SLUG" \
+        "Fix: update url to https://github.com/$EXPECTED_SLUG/archive/v<version>.tar.gz"
+      BREW_OK=false
+    fi
+
+    if ! echo "$FORMULA_HP_LINE" | grep -qF "$EXPECTED_SLUG"; then
+      fail "homebrew formula: homepage repo" \
+        "$FORMULA_FILE: homepage does not reference $EXPECTED_SLUG" \
+        "Fix: update homepage to https://github.com/$EXPECTED_SLUG"
+      BREW_OK=false
+    fi
+
+    if [[ -n "$PLUGIN_VERSION" ]]; then
+      FORMULA_VERSION=$(echo "$FORMULA_URL_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/^v//' | head -1 || echo "")
+      if [[ -z "$FORMULA_VERSION" ]]; then
+        fail "homebrew formula: version in url" \
+          "$FORMULA_FILE: url line contains no semver tag (expected v$PLUGIN_VERSION)" \
+          "Fix: url must contain a version like v$PLUGIN_VERSION"
+        BREW_OK=false
+      elif [[ "$FORMULA_VERSION" != "$PLUGIN_VERSION" ]]; then
+        fail "homebrew formula: version skew" \
+          "$FORMULA_FILE: url version ($FORMULA_VERSION) != plugin version ($PLUGIN_VERSION)" \
+          "Fix: update url in $FORMULA_FILE to reference v$PLUGIN_VERSION"
+        BREW_OK=false
+      fi
+    fi
+  fi
+fi
+$BREW_OK && pass "homebrew formula consistency"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 TOTAL=$((PASS + FAIL))

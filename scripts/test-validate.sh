@@ -86,6 +86,14 @@ description: Test command
 # Test command
 '
 
+VALID_FORMULA_RB='class Movp < Formula
+  desc "MoVP control plane plugins for AI coding tools"
+  homepage "https://github.com/test/test"
+  url "https://github.com/test/test/archive/v1.0.0.tar.gz"
+  sha256 "PLACEHOLDER_UPDATE_AFTER_TAGGING"
+  license "MIT"
+end'
+
 VALID_MARKETPLACE_JSON='{
   "name": "movp",
   "version": "1.0.0",
@@ -142,6 +150,10 @@ EOF
   for cmd in review review-status review-stop review-summarize optimize status settings; do
     echo "$VALID_COMMAND_MD" > "$dir/claude-plugin/commands/$cmd.md"
   done
+
+  # Homebrew formula template (sha256 stays PLACEHOLDER — Option B: tap owns truth)
+  mkdir -p "$dir/scripts/homebrew"
+  echo "$VALID_FORMULA_RB" > "$dir/scripts/homebrew/movp.rb"
 
   # git add + commit so git ls-files works
   git -C "$dir" add -A
@@ -348,6 +360,52 @@ output_clean=$(echo "$output" | grep -v '^EXIT:')
 assert_exit_code "CHECK 7 missing skills dir: exits 1" 1 "$exit_code"
 assert_contains "CHECK 7 missing skills dir: names platform" "claude-plugin" "$output_clean"
 assert_contains "CHECK 7 missing skills dir: names dir" "skills" "$output_clean"
+
+# ── TEST 11: CHECK 10 — formula url/homepage points to wrong repo ─────────────
+
+echo ""
+echo "=== TEST 11: CHECK 10 — formula references wrong repo ==="
+FIXTURE=$(build_fixture)
+cat > "$FIXTURE/scripts/homebrew/movp.rb" <<'EOF'
+class Movp < Formula
+  desc "MoVP control plane plugins for AI coding tools"
+  homepage "https://github.com/wrong-org/wrong-repo"
+  url "https://github.com/wrong-org/wrong-repo/archive/v1.0.0.tar.gz"
+  sha256 "PLACEHOLDER_UPDATE_AFTER_TAGGING"
+  license "MIT"
+end
+EOF
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "wrong repo"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 10 wrong repo: exits 1" 1 "$exit_code"
+assert_contains "CHECK 10 wrong repo: url message" "url does not reference" "$output_clean"
+
+# ── TEST 12: CHECK 10 — formula url version skew ──────────────────────────────
+
+echo ""
+echo "=== TEST 12: CHECK 10 — formula version skew ==="
+FIXTURE=$(build_fixture)
+cat > "$FIXTURE/scripts/homebrew/movp.rb" <<'EOF'
+class Movp < Formula
+  desc "MoVP control plane plugins for AI coding tools"
+  homepage "https://github.com/test/test"
+  url "https://github.com/test/test/archive/v0.9.0.tar.gz"
+  sha256 "PLACEHOLDER_UPDATE_AFTER_TAGGING"
+  license "MIT"
+end
+EOF
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "version skew"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 10 version skew: exits 1" 1 "$exit_code"
+assert_contains "CHECK 10 version skew: message" "url version" "$output_clean"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
