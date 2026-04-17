@@ -87,7 +87,7 @@ review:
   auto_review:
     consent:
       schema_version: 1
-      plugin_version: "1.2.0"
+      plugin_version: "1.2.1"
       granted_at: "2026-04-16T12:34:56Z"
 ```
 
@@ -97,17 +97,19 @@ Future plugin versions with material behavior changes may bump a minimum consent
 
 After a `y` reply, persist the consent record using the following ladder, in order:
 
-1. **MCP write tool** (e.g. `set_config`) — preferred. Check `movp://movp/registry` for availability.
-2. **`yq`** if installed — detect via `command -v yq`, then use in-place edit preserving comments and structure.
+1. **MCP write tool** (e.g. `set_config`) — preferred. Check the session's **deferred MCP tool list** for `set_config` (bare) or `mcp__movp__set_config`. Do NOT read `movp://movp/registry` to detect tools — MCP tools and MCP resources are separate; resource listings never contain tool definitions.
+2. **`yq` v4+** (Mike Farah's Go yq) if installed — detect via `command -v yq` and confirm `yq --version` reports `v4.x`. Python `yq` and older versions lack the pipeline / `strenv()` syntax and must fall through to step 3. When using `yq`, note that `-i` reserializes the full document — content and semantics preserved, but inline-comment whitespace may normalize and unrelated sections' formatting may shift. Long-term fix is the MCP write tool (step 1).
 3. **Neither available** — emit:
 
    ```
-   [MoVP] Consent recorded for this session only — cannot persist to .movp/config.yaml without yq or MCP write tool. Install yq (brew install yq) or add the consent record manually.
+   [MoVP] Consent recorded for this session only — cannot persist to .movp/config.yaml without yq v4+ or MCP write tool. Install yq (brew install yq) or add the consent record manually.
    ```
 
    Then **proceed with the current auto-review this session** (the operator said yes). The next session will re-prompt.
 
 This preserves immediate intent without failing the review, while surfacing the persistence gap visibly.
+
+**Note:** If the operator has already run `/movp:auto-review on` in this repo, `review.auto_review.consent` will already be present at the correct `schema_version`, and Step 0.3 of this skill is a no-op for them — they will not see the consent prompt.
 
 ## Step 1 — Trigger the review
 
@@ -166,7 +168,7 @@ Both this skill and `/movp:review` parse `get_review_status` output using the fo
 
 - Run `movp:status` before triggering a review
 - Call `listMcpResources` to verify tools exist
-- Read `movp://movp/registry` to confirm tool registration (except during the Consent write path ladder, where it guides the write strategy)
+- Do NOT read `movp://movp/registry` to confirm tool registration — MCP tools live in the session's deferred tool list, not in resource listings (see "Consent write path" step 1 for the correct probe)
 - Conclude tools are unavailable based on resource listings
 
 MCP tools and MCP resources are separate. Tools appear in the session's deferred tool list, not in resource listings. If `trigger_review` fails, report the error — do not substitute a manual or simulated review.
