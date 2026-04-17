@@ -1,6 +1,8 @@
 ---
 description: "Toggle MoVP auto-review on/off or show status"
 argument-hint: "on | off | status"
+required_tools: []
+required_resources: [movp://movp/config]
 ---
 
 Toggle the MoVP auto-review skill (`review-advisor`) without editing `.movp/config.yaml` by hand. Operates on `review.auto_review.plan_files`, `review.auto_review.code_output`, and (for `on`) `review.auto_review.consent`.

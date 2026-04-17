@@ -1,5 +1,7 @@
 ---
 description: "Run an adversarial review loop of the most recent artifact"
+required_tools: [trigger_review, get_review_status, resolve_review]
+required_resources: []
 ---
 Run an adversarial review loop. You will trigger a review, implement all findings, then re-review until the score reaches 9.0 or the operator stops. Track `previous_score` and `round` across iterations.
 

@@ -142,14 +142,34 @@ EOF
     echo "$VALID_PLUGIN_JSON" > "$pdir/.${platform}-plugin/plugin.json"
     echo "$VALID_SKILL_MD" > "$pdir/skills/review-advisor/SKILL.md"
     echo "$VALID_SKILL_MD" > "$pdir/skills/movp-control-plane/SKILL.md"
-    echo '{"mcpServers": {}}' > "$pdir/.mcp.json.example"
   done
 
-  # 8 command files in claude-plugin
+  # 9 command files in claude-plugin (includes doctor.md)
   mkdir -p "$dir/claude-plugin/commands"
-  for cmd in review review-status review-stop review-summarize optimize status settings auto-review; do
+  for cmd in review review-status review-stop review-summarize optimize status settings auto-review doctor; do
     echo "$VALID_COMMAND_MD" > "$dir/claude-plugin/commands/$cmd.md"
   done
+
+  # manifest.json — synced across all three platforms
+  VALID_MANIFEST_JSON='{"pinned_mcp_server_version":"1.0.0","tools":[],"resources":[]}'
+  for platform in claude cursor codex; do
+    echo "$VALID_MANIFEST_JSON" > "$dir/${platform}-plugin/manifest.json"
+  done
+
+  # scripts/mcp-smoke/package-lock.json — version must match manifest (CHECK 13)
+  mkdir -p "$dir/scripts/mcp-smoke"
+  cat > "$dir/scripts/mcp-smoke/package-lock.json" <<'EOF'
+{
+  "name": "mcp-smoke",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": { "name": "mcp-smoke", "dependencies": { "@movp/mcp-server": "1.0.0" } },
+    "node_modules/@movp/mcp-server": { "version": "1.0.0", "resolved": "https://registry.npmjs.org/@movp/mcp-server/-/mcp-server-1.0.0.tgz", "integrity": "sha512-fixture" }
+  }
+}
+EOF
+  echo '{"name":"mcp-smoke","dependencies":{"@movp/mcp-server":"1.0.0"}}' > "$dir/scripts/mcp-smoke/package.json"
 
   # Homebrew formula template (sha256 stays PLACEHOLDER — Option B: tap owns truth)
   mkdir -p "$dir/scripts/homebrew"
@@ -471,6 +491,55 @@ output_clean=$(echo "$output" | grep -v '^EXIT:')
 
 assert_exit_code "CHECK 11 Rule C: exits 1" 1 "$exit_code"
 assert_contains "CHECK 11 Rule C: message" "strenv(FOO)" "$output_clean"
+
+# ── TEST 16: CHECK 12 — declared required_tool not in manifest ───────────────
+
+echo ""
+echo "=== TEST 16: CHECK 12 — required_tool not in manifest ==="
+FIXTURE=$(build_fixture)
+# Inject a bogus required_tool into a SKILL.md that is not present in manifest.tools
+cat > "$FIXTURE/claude-plugin/skills/review-advisor/SKILL.md" <<'EOF'
+---
+name: review-advisor
+description: test
+required_tools: [bogus_nonexistent_tool]
+required_resources: []
+---
+body
+EOF
+# Sync to cursor/codex so CHECK 1 (SKILL.md sync) still passes
+cp "$FIXTURE/claude-plugin/skills/review-advisor/SKILL.md" "$FIXTURE/cursor-plugin/skills/review-advisor/SKILL.md"
+cp "$FIXTURE/claude-plugin/skills/review-advisor/SKILL.md" "$FIXTURE/codex-plugin/skills/review-advisor/SKILL.md"
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "bogus tool"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 12 bogus tool: exits 1" 1 "$exit_code"
+assert_contains "CHECK 12 bogus tool: message" "bogus_nonexistent_tool" "$output_clean"
+assert_contains "CHECK 12 bogus tool: mentions manifest" "not found in claude-plugin/manifest.json" "$output_clean"
+
+# ── TEST 17: CHECK 13 — manifest version skew vs lockfile ────────────────────
+
+echo ""
+echo "=== TEST 17: CHECK 13 — manifest vs lockfile version skew ==="
+FIXTURE=$(build_fixture)
+# Bump manifest's pinned version to something different from the lockfile's 1.0.0
+for platform in claude cursor codex; do
+  cat > "$FIXTURE/${platform}-plugin/manifest.json" <<'EOF'
+{"pinned_mcp_server_version":"9.9.9","tools":[],"resources":[]}
+EOF
+done
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "version skew"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 13 version skew: exits 1" 1 "$exit_code"
+assert_contains "CHECK 13 version skew: message" "Version skew" "$output_clean"
+assert_contains "CHECK 13 version skew: shows versions" "9.9.9" "$output_clean"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

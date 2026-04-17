@@ -1,5 +1,7 @@
 ---
 description: "Stop the current running adversarial review"
+required_tools: [get_review_status, resolve_review]
+required_resources: []
 ---
 Stop the current running adversarial review by sending the operator acceptance signal.
 

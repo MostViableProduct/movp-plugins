@@ -23,3 +23,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run fixture tests
         run: bash scripts/test-validate.sh
+
+  mcp-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install MCP smoke harness
+        working-directory: scripts/mcp-smoke
+        run: npm ci
+      - name: Run MCP smoke test
+        working-directory: scripts/mcp-smoke
+        run: npm test
