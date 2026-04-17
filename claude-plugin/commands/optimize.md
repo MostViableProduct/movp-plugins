@@ -1,7 +1,7 @@
 ---
 description: "Analyze review data and recommend rule improvements"
 required_tools: [get_review_status, dismiss_rule_suggestion, dismiss_recommendation]
-required_resources: [movp://control-plane/recommendations]
+required_resources: [movp://control-plane/recommendations, movp://movp/suggested-rules]
 ---
 Analyze MoVP's review loop training data and recommend rule improvements based on recurring patterns.
 

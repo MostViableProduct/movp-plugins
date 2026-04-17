@@ -6,7 +6,7 @@ description: >
   session and when the user mentions project health, cost, stability,
   recommendations, anomalies, or constraints.
 required_tools: [check_constraints, get_cost_summary]
-required_resources: [movp://control-plane/health-scores, movp://control-plane/recommendations]
+required_resources: [movp://control-plane/health-scores, movp://control-plane/recommendations, movp://control-plane/anomalies]
 ---
 
 # MoVP Control Plane

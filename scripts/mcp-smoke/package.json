@@ -6,6 +6,6 @@
     "test": "node client.mjs"
   },
   "dependencies": {
-    "@movp/mcp-server": "0.1.8"
+    "@movp/mcp-server": "0.1.9"
   }
 }
