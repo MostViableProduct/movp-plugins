@@ -1,0 +1,5 @@
+{
+  "pinned_mcp_server_version": "0.1.7",
+  "tools": ["trigger_review","get_review_status","resolve_review","dismiss_rule_suggestion","dismiss_recommendation","check_constraints","get_cost_summary","movp_report_context"],
+  "resources": ["movp://movp/config","movp://movp/manifest","movp://control-plane/health-scores","movp://control-plane/recommendations"]
+}
