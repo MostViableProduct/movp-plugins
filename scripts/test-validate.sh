@@ -145,10 +145,16 @@ EOF
     echo '{"mcpServers": {}}' > "$pdir/.mcp.json.example"
   done
 
-  # 7 command files in claude-plugin
+  # 8 command files in claude-plugin (including doctor.md)
   mkdir -p "$dir/claude-plugin/commands"
-  for cmd in review review-status review-stop review-summarize optimize status settings; do
+  for cmd in review review-status review-stop review-summarize optimize status settings doctor; do
     echo "$VALID_COMMAND_MD" > "$dir/claude-plugin/commands/$cmd.md"
+  done
+
+  # manifest.json — synced across all three platforms
+  VALID_MANIFEST_JSON='{"pinned_mcp_server_version":"1.0.0","tools":[],"resources":[]}'
+  for platform in claude cursor codex; do
+    echo "$VALID_MANIFEST_JSON" > "$dir/${platform}-plugin/manifest.json"
   done
 
   # Homebrew formula template (sha256 stays PLACEHOLDER — Option B: tap owns truth)
@@ -406,6 +412,70 @@ output_clean=$(echo "$output" | grep -v '^EXIT:')
 
 assert_exit_code "CHECK 10 version skew: exits 1" 1 "$exit_code"
 assert_contains "CHECK 10 version skew: message" "url version" "$output_clean"
+
+# ── TEST 13: CHECK 11 — required_tool not in manifest ────────────────────────
+
+echo ""
+echo "=== TEST 13: CHECK 11 — required_tool not in manifest ==="
+FIXTURE=$(build_fixture)
+# Inject a SKILL.md with a bogus required_tools entry not present in manifest.json
+cat > "$FIXTURE/claude-plugin/skills/movp-review/SKILL.md" <<'EOF'
+---
+name: movp-review
+description: Use when running a review
+required_tools: [bogus_nonexistent_tool]
+---
+
+# Test Skill
+
+Test content.
+EOF
+# Also update cursor/codex copies to keep sync check passing
+cp "$FIXTURE/claude-plugin/skills/movp-review/SKILL.md" "$FIXTURE/cursor-plugin/skills/movp-review/SKILL.md"
+cp "$FIXTURE/claude-plugin/skills/movp-review/SKILL.md" "$FIXTURE/codex-plugin/skills/movp-review/SKILL.md"
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "bogus required_tool"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 11 unknown required_tool: exits 1" 1 "$exit_code"
+assert_contains "CHECK 11 unknown required_tool: names tool" "bogus_nonexistent_tool" "$output_clean"
+assert_contains "CHECK 11 unknown required_tool: message" "not found in" "$output_clean"
+
+# ── TEST 14: CHECK 12 — manifest vs lockfile version skew ────────────────────
+
+echo ""
+echo "=== TEST 14: CHECK 12 — manifest vs lockfile version skew ==="
+FIXTURE=$(build_fixture)
+# manifest.json pins 9.9.9 but lockfile records 0.1.7 — version skew
+cat > "$FIXTURE/claude-plugin/manifest.json" <<'EOF'
+{"pinned_mcp_server_version":"9.9.9","tools":[],"resources":[]}
+EOF
+# Sync manifest to cursor/codex to keep CHECK 1 manifest sync passing
+cp "$FIXTURE/claude-plugin/manifest.json" "$FIXTURE/cursor-plugin/manifest.json"
+cp "$FIXTURE/claude-plugin/manifest.json" "$FIXTURE/codex-plugin/manifest.json"
+# Create scripts/mcp-smoke/package-lock.json with version 0.1.7
+mkdir -p "$FIXTURE/scripts/mcp-smoke"
+cat > "$FIXTURE/scripts/mcp-smoke/package-lock.json" <<'EOF'
+{
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/@movp/mcp-server": {
+      "version": "0.1.7"
+    }
+  }
+}
+EOF
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "version skew lockfile"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 12 version skew: exits 1" 1 "$exit_code"
+assert_contains "CHECK 12 version skew: message" "Version skew" "$output_clean"
+assert_contains "CHECK 12 version skew: shows versions" "9.9.9" "$output_clean"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
