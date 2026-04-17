@@ -581,14 +581,15 @@ $DEPS_OK && pass "declared deps match manifest"
 # Compares manifest.json.pinned_mcp_server_version against the version recorded
 # in scripts/mcp-smoke/package-lock.json. The lockfile is the authoritative
 # version contract — npm ci in CI installs exactly what it pins.
-# SKIP (warning only) if the lockfile doesn't exist yet.
 
 LOCKFILE="scripts/mcp-smoke/package-lock.json"
 VER_OK=true
 
 if [[ ! -f "$LOCKFILE" ]]; then
-  echo "[WARN] CHECK 12: $LOCKFILE not found — skipping version parity check"
-  echo "       Fix: run 'npm install @movp/mcp-server@<version> --save-exact' in scripts/mcp-smoke/"
+  fail "MCP version parity" \
+    "$LOCKFILE not found" \
+    "Fix: run 'npm install @movp/mcp-server@<version> --save-exact' in scripts/mcp-smoke/"
+  VER_OK=false
 else
   PINNED_VER=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE')).get('pinned_mcp_server_version',''))" 2>/dev/null || echo "")
   LOCKFILE_VER=$(python3 -c "
@@ -623,7 +624,7 @@ else:
   fi
 fi
 
-$VER_OK && [[ -f "$LOCKFILE" ]] && pass "MCP server version parity"
+$VER_OK && pass "MCP server version parity"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

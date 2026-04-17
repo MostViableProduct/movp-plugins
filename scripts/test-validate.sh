@@ -157,6 +157,28 @@ EOF
     echo "$VALID_MANIFEST_JSON" > "$dir/${platform}-plugin/manifest.json"
   done
 
+  # scripts/mcp-smoke/package-lock.json — version must match the manifest above (CHECK 12)
+  mkdir -p "$dir/scripts/mcp-smoke"
+  cat > "$dir/scripts/mcp-smoke/package-lock.json" <<'EOF'
+{
+  "name": "mcp-smoke",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "mcp-smoke",
+      "dependencies": { "@movp/mcp-server": "1.0.0" }
+    },
+    "node_modules/@movp/mcp-server": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/@movp/mcp-server/-/mcp-server-1.0.0.tgz",
+      "integrity": "sha512-fixture"
+    }
+  }
+}
+EOF
+  echo '{"name":"mcp-smoke","dependencies":{"@movp/mcp-server":"1.0.0"}}' > "$dir/scripts/mcp-smoke/package.json"
+
   # Homebrew formula template (sha256 stays PLACEHOLDER — Option B: tap owns truth)
   mkdir -p "$dir/scripts/homebrew"
   echo "$VALID_FORMULA_RB" > "$dir/scripts/homebrew/movp.rb"

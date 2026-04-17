@@ -13,3 +13,6 @@
 # npm pack artifacts
 *.tgz
 package/
+
+# scripts/mcp-smoke node_modules (installed by npm ci in CI; lockfile is committed)
+scripts/mcp-smoke/node_modules/
