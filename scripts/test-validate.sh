@@ -150,14 +150,28 @@ EOF
     echo "$VALID_COMMAND_MD" > "$dir/claude-plugin/commands/$cmd.md"
   done
 
-  # manifest.json — synced across all three platforms
-  VALID_MANIFEST_JSON='{"pinned_mcp_server_version":"1.0.0","tools":[],"resources":[]}'
-  for platform in claude cursor codex; do
-    echo "$VALID_MANIFEST_JSON" > "$dir/${platform}-plugin/manifest.json"
-  done
+  # scripts/manifest.source.json — single source of truth for platform manifests
+  # and scripts/mcp-smoke/package.json (CHECK 14)
+  mkdir -p "$dir/scripts"
+  cat > "$dir/scripts/manifest.source.json" <<'EOF'
+{
+  "pinned_mcp_server_version": "1.0.0",
+  "tools": [],
+  "resources": []
+}
+EOF
 
-  # scripts/mcp-smoke/package-lock.json — version must match manifest (CHECK 13)
-  mkdir -p "$dir/scripts/mcp-smoke"
+  # Copy the real generator into the fixture so CHECK 14 has something to run.
+  # The generator derives REPO_ROOT from its own BASH_SOURCE, so copying makes
+  # it treat the fixture dir as repo root.
+  cp "$(dirname "$VALIDATE")/generate-manifests.sh" "$dir/scripts/generate-manifests.sh"
+  chmod +x "$dir/scripts/generate-manifests.sh"
+
+  # Run the generator to produce platform manifests + scripts/mcp-smoke/package.json
+  (cd "$dir" && bash scripts/generate-manifests.sh >/dev/null)
+
+  # scripts/mcp-smoke/package-lock.json — version must match manifest (CHECK 13).
+  # The generator doesn't write the lockfile (npm install does in real life).
   cat > "$dir/scripts/mcp-smoke/package-lock.json" <<'EOF'
 {
   "name": "mcp-smoke",
@@ -169,7 +183,6 @@ EOF
   }
 }
 EOF
-  echo '{"name":"mcp-smoke","dependencies":{"@movp/mcp-server":"1.0.0"}}' > "$dir/scripts/mcp-smoke/package.json"
 
   # Homebrew formula template (sha256 stays PLACEHOLDER — Option B: tap owns truth)
   mkdir -p "$dir/scripts/homebrew"
@@ -525,12 +538,16 @@ assert_contains "CHECK 12 bogus tool: mentions manifest" "not found in claude-pl
 echo ""
 echo "=== TEST 17: CHECK 13 — manifest vs lockfile version skew ==="
 FIXTURE=$(build_fixture)
-# Bump manifest's pinned version to something different from the lockfile's 1.0.0
-for platform in claude cursor codex; do
-  cat > "$FIXTURE/${platform}-plugin/manifest.json" <<'EOF'
-{"pinned_mcp_server_version":"9.9.9","tools":[],"resources":[]}
+# Bump the source to 9.9.9 and regenerate so platform manifests match source
+# (CHECK 14 passes) but the lockfile is still pinned to 1.0.0 (CHECK 13 fails).
+cat > "$FIXTURE/scripts/manifest.source.json" <<'EOF'
+{
+  "pinned_mcp_server_version": "9.9.9",
+  "tools": [],
+  "resources": []
+}
 EOF
-done
+(cd "$FIXTURE" && bash scripts/generate-manifests.sh >/dev/null)
 git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "version skew"
 
 output=$(run_validate_exit "$FIXTURE")
@@ -540,6 +557,29 @@ output_clean=$(echo "$output" | grep -v '^EXIT:')
 assert_exit_code "CHECK 13 version skew: exits 1" 1 "$exit_code"
 assert_contains "CHECK 13 version skew: message" "Version skew" "$output_clean"
 assert_contains "CHECK 13 version skew: shows versions" "9.9.9" "$output_clean"
+
+# ── TEST 18: CHECK 14 — platform manifest drifts from source ─────────────────
+
+echo ""
+echo "=== TEST 18: CHECK 14 — platform manifest drifts from source ==="
+FIXTURE=$(build_fixture)
+# Mutate a platform manifest directly without updating source — the generator's
+# diff check (CHECK 14) should fail.
+cat > "$FIXTURE/claude-plugin/manifest.json" <<'EOF'
+{"pinned_mcp_server_version":"1.0.0","tools":["drifted_extra_tool"],"resources":[]}
+EOF
+# Sync cursor/codex so CHECK 1 (manifest.json sync) doesn't mask the CHECK 14 failure
+cp "$FIXTURE/claude-plugin/manifest.json" "$FIXTURE/cursor-plugin/manifest.json"
+cp "$FIXTURE/claude-plugin/manifest.json" "$FIXTURE/codex-plugin/manifest.json"
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "generator drift"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 14 drift: exits 1" 1 "$exit_code"
+assert_contains "CHECK 14 drift: names file" "claude-plugin/manifest.json" "$output_clean"
+assert_contains "CHECK 14 drift: names remedy" "generate-manifests.sh" "$output_clean"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

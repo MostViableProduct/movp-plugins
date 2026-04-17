@@ -19,6 +19,8 @@ When starting a new working session, read the control plane snapshot to establis
 2. Read `movp://control-plane/recommendations` — identify recommendations relevant to the current task
 3. Read `movp://control-plane/anomalies` — note any active HIGH or CRITICAL severity anomalies
 
+Each read is independent — proceed with whichever succeed. If any of the three fails (MCP error, server unreachable, empty contents), silently skip that category for this session; do not block the user. Only surface degraded context to the user if **all three** reads fail: `[MoVP] Control-plane context unavailable — proceeding without health/recommendations/anomalies context. Run /movp:doctor to diagnose.`
+
 Present this context **concisely and only when relevant**. Do not dump raw JSON. Do not interrupt if the user has already stated their task — weave context into the first substantive response.
 
 Example:

@@ -72,6 +72,27 @@ The schema is stable for the current check set. Adding new checks appends new en
 
 All three plugin.json files and marketplace.json always share the same version. Never bump them independently — use `release.sh`.
 
+### MCP server pinning
+
+`scripts/manifest.source.json` is the single source of truth for the MCP server version pin and the declared tools/resources. After editing it, regenerate derived artifacts:
+
+```bash
+bash scripts/generate-manifests.sh
+```
+
+This rewrites `{claude,cursor,codex}-plugin/manifest.json` and `scripts/mcp-smoke/package.json`. After a `pinned_mcp_server_version` bump, also update the lockfile:
+
+```bash
+cd scripts/mcp-smoke && npm install @movp/mcp-server@<version> --save-exact
+```
+
+Then commit all updated files together. CI enforces the sync via:
+
+- **CHECK 12** — every `required_tools` / `required_resources` entry in SKILL/command frontmatter appears in `manifest.json`
+- **CHECK 13** — `manifest.json` `pinned_mcp_server_version` matches `scripts/mcp-smoke/package-lock.json`
+- **CHECK 14** — the three platform manifests and `scripts/mcp-smoke/package.json` match generator output for `scripts/manifest.source.json`
+- **mcp-smoke job** — spawns the pinned `@movp/mcp-server` with `MOVP_FAKE_GATEWAY=1`, asserts all declared tools and resources are exposed and readable
+
 ---
 
 ## Governance
