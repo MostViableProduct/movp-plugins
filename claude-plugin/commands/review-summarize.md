@@ -1,5 +1,7 @@
 ---
 description: "Summarize the completed adversarial review"
+required_tools: [get_review_status]
+required_resources: []
 ---
 Summarize the completed adversarial review loop for the most recent review.
 

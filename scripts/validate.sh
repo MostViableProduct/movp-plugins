@@ -16,7 +16,7 @@ if [[ "${1:-}" == "--json" ]]; then
 fi
 
 SKILLS=(review-advisor movp-control-plane)
-REQUIRED_COMMANDS=(review.md review-status.md review-stop.md review-summarize.md optimize.md status.md settings.md auto-review.md)
+REQUIRED_COMMANDS=(review.md review-status.md review-stop.md review-summarize.md optimize.md status.md settings.md auto-review.md doctor.md)
 ALLOWLIST_FILE="scripts/SECRET_SCAN_ALLOWLIST"
 
 PASS=0
@@ -69,6 +69,28 @@ for skill in "${SKILLS[@]}"; do
       pass "SKILL sync: $skill claude vs $platform"
     fi
   done
+done
+
+# Also verify manifest.json is in sync across platforms
+for platform in cursor codex; do
+  src="claude-plugin/manifest.json"
+  dst="${platform}-plugin/manifest.json"
+  if [[ ! -f "$src" ]]; then
+    fail "manifest.json sync: claude vs $platform" \
+      "$src not found" \
+      "Fix: create $src with pinned_mcp_server_version, tools, resources"
+  elif [[ ! -f "$dst" ]]; then
+    fail "manifest.json sync: claude vs $platform" \
+      "$dst not found" \
+      "Fix: copy $src to $dst"
+  elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
+    fail "manifest.json sync: claude vs $platform" \
+      "manifest.json differs between claude and $platform" \
+      "Fix: copy $src to $dst
+       Diff: diff $src $dst"
+  else
+    pass "manifest.json sync: claude vs $platform"
+  fi
 done
 
 # ── CHECK 2: plugin.json parse + schema ───────────────────────────────────────
@@ -288,7 +310,7 @@ for platform in claude cursor codex; do
     "${platform}-plugin/.${platform}-plugin/plugin.json"
     "${platform}-plugin/skills/review-advisor/SKILL.md"
     "${platform}-plugin/skills/movp-control-plane/SKILL.md"
-    "${platform}-plugin/.mcp.json.example"
+    "${platform}-plugin/manifest.json"
   )
   for f in "${required_files[@]}"; do
     if [[ ! -f "$f" ]]; then
@@ -528,6 +550,147 @@ for f in "${HYGIENE_FILES[@]}"; do
 done
 
 $HYGIENE_OK && pass "auto-review spec hygiene"
+
+# ── CHECK 12: declared deps match committed manifest ─────────────────────────
+# For each SKILL.md and command .md that declares required_tools or
+# required_resources, assert every entry appears in claude-plugin/manifest.json.
+# This check runs against the COMMITTED SNAPSHOT — its purpose is to catch
+# "skill added a tool reference without updating manifest.json".
+# Run-time drift (server missing a declared tool) is caught by the mcp-smoke
+# job (live server) and by /movp:status (live manifest resource).
+
+MANIFEST_FILE="claude-plugin/manifest.json"
+DEPS_OK=true
+
+if [[ ! -f "$MANIFEST_FILE" ]]; then
+  fail "declared deps: manifest" \
+    "$MANIFEST_FILE not found" \
+    "Fix: create $MANIFEST_FILE with tools and resources arrays"
+  DEPS_OK=false
+else
+  MANIFEST_TOOLS=$(python3 -c "import json; d=json.load(open('$MANIFEST_FILE')); print(' '.join(d.get('tools',[])))" 2>/dev/null || echo "")
+  MANIFEST_RESOURCES=$(python3 -c "import json; d=json.load(open('$MANIFEST_FILE')); print(' '.join(d.get('resources',[])))" 2>/dev/null || echo "")
+
+  check_deps_file() {
+    local f="$1"
+    [[ ! -f "$f" ]] && return
+
+    local req_tools req_resources
+    req_tools=$(python3 - "$f" <<'PYEOF'
+import sys
+content = open(sys.argv[1]).read()
+parts = content.split('---')
+if len(parts) < 3:
+    sys.exit()
+fm = parts[1]
+for line in fm.split('\n'):
+    if line.strip().startswith('required_tools:'):
+        rest = line.split(':', 1)[1].strip().strip('[]')
+        if rest:
+            for item in rest.split(','):
+                item = item.strip().strip("\"'")
+                if item:
+                    print(item)
+PYEOF
+)
+    req_resources=$(python3 - "$f" <<'PYEOF'
+import sys
+content = open(sys.argv[1]).read()
+parts = content.split('---')
+if len(parts) < 3:
+    sys.exit()
+fm = parts[1]
+for line in fm.split('\n'):
+    if line.strip().startswith('required_resources:'):
+        rest = line.split(':', 1)[1].strip().strip('[]')
+        if rest:
+            for item in rest.split(','):
+                item = item.strip().strip("\"'")
+                if item:
+                    print(item)
+PYEOF
+)
+
+    while IFS= read -r tool || [[ -n "$tool" ]]; do
+      [[ -z "$tool" ]] && continue
+      if ! echo " $MANIFEST_TOOLS " | grep -qF " $tool "; then
+        fail "declared deps: $f" \
+          "$f: required_tool '$tool' not found in $MANIFEST_FILE" \
+          "Fix: add '$tool' to the tools array in $MANIFEST_FILE, or remove it from $f"
+        DEPS_OK=false
+      fi
+    done <<< "$req_tools"
+
+    while IFS= read -r res || [[ -n "$res" ]]; do
+      [[ -z "$res" ]] && continue
+      if ! echo " $MANIFEST_RESOURCES " | grep -qF " $res "; then
+        fail "declared deps: $f" \
+          "$f: required_resource '$res' not found in $MANIFEST_FILE" \
+          "Fix: add '$res' to the resources array in $MANIFEST_FILE, or remove it from $f"
+        DEPS_OK=false
+      fi
+    done <<< "$req_resources"
+  }
+
+  # Check all skills (claude-plugin only — cursor/codex are synced from claude)
+  for skill in "${SKILLS[@]}"; do
+    check_deps_file "claude-plugin/skills/$skill/SKILL.md"
+  done
+
+  # Check all commands
+  for cmd in "${REQUIRED_COMMANDS[@]}"; do
+    check_deps_file "claude-plugin/commands/$cmd"
+  done
+fi
+
+$DEPS_OK && pass "declared deps match manifest"
+
+# ── CHECK 13: MCP server version parity ──────────────────────────────────────
+# Compares manifest.json.pinned_mcp_server_version against the version recorded
+# in scripts/mcp-smoke/package-lock.json. The lockfile is the authoritative
+# version contract — npm ci in CI installs exactly what it pins.
+
+LOCKFILE="scripts/mcp-smoke/package-lock.json"
+VER_OK=true
+
+if [[ ! -f "$LOCKFILE" ]]; then
+  fail "MCP version parity" \
+    "$LOCKFILE not found" \
+    "Fix: run 'npm install @movp/mcp-server@<version> --save-exact' in scripts/mcp-smoke/"
+  VER_OK=false
+else
+  PINNED_VER=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE')).get('pinned_mcp_server_version',''))" 2>/dev/null || echo "")
+  LOCKFILE_VER=$(python3 -c "
+import json
+d = json.load(open('$LOCKFILE'))
+pkgs = d.get('packages', {})
+key = 'node_modules/@movp/mcp-server'
+if key in pkgs:
+    print(pkgs[key].get('version', ''))
+else:
+    deps = d.get('dependencies', {})
+    print(deps.get('@movp/mcp-server', {}).get('version', ''))
+" 2>/dev/null || echo "")
+
+  if [[ -z "$PINNED_VER" ]]; then
+    fail "MCP version parity" \
+      "$MANIFEST_FILE: pinned_mcp_server_version is missing or empty" \
+      "Fix: add 'pinned_mcp_server_version' to $MANIFEST_FILE"
+    VER_OK=false
+  elif [[ -z "$LOCKFILE_VER" ]]; then
+    fail "MCP version parity" \
+      "$LOCKFILE: could not find @movp/mcp-server version" \
+      "Fix: run 'npm install @movp/mcp-server@$PINNED_VER --save-exact' in scripts/mcp-smoke/"
+    VER_OK=false
+  elif [[ "$PINNED_VER" != "$LOCKFILE_VER" ]]; then
+    fail "MCP version parity" \
+      "Version skew: manifest.json pins $PINNED_VER but lockfile has $LOCKFILE_VER" \
+      "Fix: run 'npm install @movp/mcp-server@$PINNED_VER --save-exact' in scripts/mcp-smoke/, or update pinned_mcp_server_version in manifest.json"
+    VER_OK=false
+  fi
+fi
+
+$VER_OK && pass "MCP server version parity"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

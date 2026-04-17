@@ -13,6 +13,8 @@ description: >
   Disable with /movp:auto-review off. Status via /movp:status.
 
   Skip for trivial edits, file reads, git commands, and config-only changes.
+required_tools: [trigger_review, get_review_status, resolve_review]
+required_resources: [movp://movp/config]
 ---
 
 # MoVP Review Advisor

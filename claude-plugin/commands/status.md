@@ -1,5 +1,7 @@
 ---
 description: "Show MoVP connection and configuration status"
+required_tools: [movp_report_context]
+required_resources: ["movp://movp/config", "movp://movp/manifest"]
 ---
 Read the MoVP effective config by accessing the `movp://movp/config` MCP resource, then present a clean status summary.
 
@@ -11,6 +13,10 @@ Format the output as follows:
 [MoVP] Status
 
 <if version_warning is present, show: "WARNING: <version_warning>" on its own line here>
+
+MCP Tools
+  Registered:  <N> — trigger_review, get_review_status, ... (from live movp://movp/manifest)
+  Missing:     <tools declared in required_tools of shipped skills but absent from manifest> or "none"
 
 Connection
   Workdesk:  <WORKDESK_SERVICE_URL or "not configured">
@@ -47,4 +53,12 @@ If the config resource returns an error, show the error and note:
 
 If WORKDESK_SERVICE_URL or WORKDESK_TENANT environment variables are not set, note that the MCP server is not fully configured.
 
-Do not call any other tools. Only read the `movp://movp/config` resource.
+Read both `movp://movp/config` and `movp://movp/manifest` MCP resources. Do not call any other tools except `movp_report_context` at the end.
+
+The "Missing" field in MCP Tools compares declared `required_tools` from shipped skills against the **live `movp://movp/manifest` resource** (not the committed `claude-plugin/manifest.json`). A non-empty Missing list means the running MCP server is missing tools — run `/movp:doctor` to diagnose. It does NOT mean the plugin release is misconfigured (that's what CI CHECK 12 catches separately).
+
+If `movp://movp/manifest` is unreadable (server not started, credentials wrong, etc.), show in the MCP Tools section: `Registered: 0 — (MCP server unreachable)` and `Missing: unknown — run /movp:doctor`.
+
+After displaying status, emit `MCP_STATUS_OK` or `MCP_STATUS_DEGRADED` telemetry by calling `movp_report_context` (best-effort, do not fail if unavailable) with:
+- task_description: "status_check"
+- recent_changes: JSON of {"status": "ok"|"degraded", "missing_count": N}

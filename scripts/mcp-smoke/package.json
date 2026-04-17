@@ -1,0 +1,11 @@
+{
+  "name": "mcp-smoke",
+  "private": true,
+  "description": "MCP server smoke test harness for CI",
+  "scripts": {
+    "test": "node client.mjs"
+  },
+  "dependencies": {
+    "@movp/mcp-server": "0.1.8"
+  }
+}
