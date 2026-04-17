@@ -137,17 +137,17 @@ EOF
   for platform in claude cursor codex; do
     local pdir="$dir/${platform}-plugin"
     mkdir -p "$pdir/.${platform}-plugin"
-    mkdir -p "$pdir/skills/movp-review"
+    mkdir -p "$pdir/skills/review-advisor"
     mkdir -p "$pdir/skills/movp-control-plane"
     echo "$VALID_PLUGIN_JSON" > "$pdir/.${platform}-plugin/plugin.json"
-    echo "$VALID_SKILL_MD" > "$pdir/skills/movp-review/SKILL.md"
+    echo "$VALID_SKILL_MD" > "$pdir/skills/review-advisor/SKILL.md"
     echo "$VALID_SKILL_MD" > "$pdir/skills/movp-control-plane/SKILL.md"
     echo '{"mcpServers": {}}' > "$pdir/.mcp.json.example"
   done
 
-  # 7 command files in claude-plugin
+  # 8 command files in claude-plugin
   mkdir -p "$dir/claude-plugin/commands"
-  for cmd in review review-status review-stop review-summarize optimize status settings; do
+  for cmd in review review-status review-stop review-summarize optimize status settings auto-review; do
     echo "$VALID_COMMAND_MD" > "$dir/claude-plugin/commands/$cmd.md"
   done
 
@@ -267,7 +267,7 @@ assert_contains "CHECK 3 version skew: message" "Version skew" "$output_clean"
 echo ""
 echo "=== TEST 5: CHECK 1 — SKILL.md sync drift ==="
 FIXTURE=$(build_fixture)
-echo "extra line" >> "$FIXTURE/cursor-plugin/skills/movp-review/SKILL.md"
+echo "extra line" >> "$FIXTURE/cursor-plugin/skills/review-advisor/SKILL.md"
 git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "drift"
 
 output=$(run_validate_exit "$FIXTURE")

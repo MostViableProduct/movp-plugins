@@ -70,7 +70,7 @@ Findings (<total>):
 [LOW] ...
 ```
 
-Parse `Quality: <number>/10` from the `get_review_status` text to extract the score. Store it as `current_score`. Add the round's cost to `total_cost`.
+Parse the score and cost from the `get_review_status` text using the authoritative spec in `skills/review-advisor/SKILL.md` → "Parsing spec". Store the score as `current_score` and add the round's cost to `total_cost`. Follow the spec's parse-failure policy (visible drift message, no fabricated values).
 
 On round 1 (previous_score is null), show "Initial score: X/10" instead of a delta.
 

@@ -15,8 +15,8 @@ if [[ "${1:-}" == "--json" ]]; then
   JSON_MODE=true
 fi
 
-SKILLS=(movp-review movp-control-plane)
-REQUIRED_COMMANDS=(review.md review-status.md review-stop.md review-summarize.md optimize.md status.md settings.md)
+SKILLS=(review-advisor movp-control-plane)
+REQUIRED_COMMANDS=(review.md review-status.md review-stop.md review-summarize.md optimize.md status.md settings.md auto-review.md)
 ALLOWLIST_FILE="scripts/SECRET_SCAN_ALLOWLIST"
 
 PASS=0
@@ -270,7 +270,7 @@ for platform in claude cursor codex; do
     "${platform}-plugin"
     "${platform}-plugin/.${platform}-plugin"
     "${platform}-plugin/skills"
-    "${platform}-plugin/skills/movp-review"
+    "${platform}-plugin/skills/review-advisor"
     "${platform}-plugin/skills/movp-control-plane"
   )
   [[ "$platform" == "claude" ]] && required_dirs+=("claude-plugin/commands")
@@ -286,7 +286,7 @@ for platform in claude cursor codex; do
 
   required_files=(
     "${platform}-plugin/.${platform}-plugin/plugin.json"
-    "${platform}-plugin/skills/movp-review/SKILL.md"
+    "${platform}-plugin/skills/review-advisor/SKILL.md"
     "${platform}-plugin/skills/movp-control-plane/SKILL.md"
     "${platform}-plugin/.mcp.json.example"
   )

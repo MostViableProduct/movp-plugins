@@ -25,7 +25,7 @@ Before opening a PR, run:
 bash scripts/validate.sh
 ```
 
-This runs all 9 checks: SKILL.md sync, plugin.json schema and version consistency, marketplace.json alignment, frontmatter validity, command completeness, required files, executable bits, and secret scan. Fix any failures before pushing.
+This runs all 10 checks: SKILL.md sync, plugin.json schema and version consistency, marketplace.json alignment, frontmatter validity, command completeness, required files, executable bits, secret scan, and Homebrew formula consistency. Fix any failures before pushing.
 
 For machine-readable output (CI tooling, scripting):
 
@@ -41,7 +41,7 @@ The `--json` output schema (printed to stdout after normal `[PASS]`/`[FAIL]` lin
   "fail": 0,
   "total": 9,
   "checks": [
-    { "check": "SKILL sync: movp-review claude vs cursor", "status": "pass", "detail": "" },
+    { "check": "SKILL sync: review-advisor claude vs cursor", "status": "pass", "detail": "" },
     { "check": "secret scan: leaked.txt",                  "status": "fail", "detail": "Credential leak: leaked.txt matches 1 secret pattern(s): 'WORKDESK_API_KEY=...'" }
   ]
 }
@@ -114,20 +114,22 @@ When editing a skill's `description`, test it by starting a new session and chec
 
 All three plugins carry identical `SKILL.md` files:
 
-- `claude-plugin/skills/movp-review/SKILL.md`
-- `codex-plugin/skills/movp-review/SKILL.md`
-- `cursor-plugin/skills/movp-review/SKILL.md`
+- `claude-plugin/skills/review-advisor/SKILL.md`
+- `codex-plugin/skills/review-advisor/SKILL.md`
+- `cursor-plugin/skills/review-advisor/SKILL.md`
 
 And same for `movp-control-plane`. **When editing a SKILL.md, update all three copies.** Verify with:
 
 ```bash
-diff claude-plugin/skills/movp-review/SKILL.md codex-plugin/skills/movp-review/SKILL.md
-diff claude-plugin/skills/movp-review/SKILL.md cursor-plugin/skills/movp-review/SKILL.md
+diff claude-plugin/skills/review-advisor/SKILL.md codex-plugin/skills/review-advisor/SKILL.md
+diff claude-plugin/skills/review-advisor/SKILL.md cursor-plugin/skills/review-advisor/SKILL.md
 diff claude-plugin/skills/movp-control-plane/SKILL.md codex-plugin/skills/movp-control-plane/SKILL.md
 diff claude-plugin/skills/movp-control-plane/SKILL.md cursor-plugin/skills/movp-control-plane/SKILL.md
 ```
 
 All four diffs should be empty.
+
+> **Migration note (1.2.0):** the skill formerly named `movp-review` was renamed to `review-advisor` to disambiguate from the `/movp:review` command in the slash picker. If you're updating docs, search for both `movp-review` and `review-advisor` during the transition — historical planning docs under `docs/superpowers/plans/` still reference the old name by design.
 
 ---
 
