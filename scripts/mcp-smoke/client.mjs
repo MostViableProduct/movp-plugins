@@ -33,6 +33,28 @@ function makeClient(child) {
   const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
   const pending = new Map();
   let nextId = 1;
+  let serverStderr = "";
+
+  // Capture server stderr so a crash can be reported in the failure message.
+  child.stderr?.on("data", (chunk) => { serverStderr += chunk.toString(); });
+
+  // If the child exits or errors out, reject every pending promise so
+  // await-ers fail fast instead of waiting for the module's 15s timeout
+  // or (worse) dropping to an empty event loop and exiting 0 silently.
+  const abort = (reason) => {
+    for (const [id, handler] of pending) {
+      pending.delete(id);
+      handler.reject(new Error(reason));
+    }
+  };
+  child.on("exit", (code, signal) => {
+    const tail = serverStderr.trim().split("\n").slice(-3).join(" | ");
+    abort(
+      `server process exited (code=${code} signal=${signal})` +
+      (tail ? ` — stderr: ${tail}` : "")
+    );
+  });
+  child.on("error", (err) => abort(`server process error: ${err.message}`));
 
   rl.on("line", (line) => {
     const trimmed = line.trim();
@@ -70,7 +92,7 @@ async function connect() {
     try {
       child = spawn("node", [SERVER_PATH], {
         env: { ...process.env, MOVP_FAKE_GATEWAY: "1" },
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["pipe", "pipe", "pipe"],
       });
       const client = makeClient(child);
       await client.send("initialize", {
@@ -152,19 +174,27 @@ async function run() {
   client.close();
   clearTimeout(timer);
 
+  // Build the summary and flush stdout/stderr explicitly before exit.
+  // process.exit() is synchronous and has dropped the PASS line in CI logs;
+  // writing with a drain callback guarantees the bytes reach the runner's log.
   if (failures.length === 0) {
-    console.log(
-      `[mcp-smoke] PASS: ${serverToolNames.size} tools, ${serverResourceUris.size} resources`
-    );
-    console.log(`  tools:     ${[...serverToolNames].join(", ")}`);
-    console.log(`  resources: ${[...serverResourceUris].join(", ")}`);
-    process.exit(0);
+    const lines = [
+      `[mcp-smoke] PASS: ${serverToolNames.size} tools, ${serverResourceUris.size} resources, ${MANIFEST.resources.length} resources/read contracts`,
+      `  tools:     ${[...serverToolNames].join(", ")}`,
+      `  resources: ${[...serverResourceUris].join(", ")}`,
+      "",
+    ].join("\n");
+    process.stdout.write(lines, () => process.exit(0));
   } else {
-    console.error("[mcp-smoke] FAIL:");
-    for (const f of failures) console.error(`  - ${f}`);
-    console.error(`\nServer tools:     ${[...serverToolNames].join(", ")}`);
-    console.error(`Expected tools:   ${MANIFEST.tools.join(", ")}`);
-    process.exit(1);
+    const lines = [
+      "[mcp-smoke] FAIL:",
+      ...failures.map((f) => `  - ${f}`),
+      "",
+      `Server tools:     ${[...serverToolNames].join(", ")}`,
+      `Expected tools:   ${MANIFEST.tools.join(", ")}`,
+      "",
+    ].join("\n");
+    process.stderr.write(lines, () => process.exit(1));
   }
 }
 

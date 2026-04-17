@@ -25,7 +25,7 @@ Before opening a PR, run:
 bash scripts/validate.sh
 ```
 
-This runs all 10 checks: SKILL.md sync, plugin.json schema and version consistency, marketplace.json alignment, frontmatter validity, command completeness, required files, executable bits, secret scan, and Homebrew formula consistency. Fix any failures before pushing.
+This runs all 14 checks: SKILL.md + manifest.json sync, plugin.json schema and version consistency, marketplace.json alignment, frontmatter validity, command completeness, required files, executable bits, secret scan, Homebrew formula consistency, auto-review spec hygiene, declared-deps ⊆ manifest, MCP server version parity (lockfile), and manifest generator output drift. Fix any failures before pushing.
 
 For machine-readable output (CI tooling, scripting):
 
@@ -37,15 +37,18 @@ The `--json` output schema (printed to stdout after normal `[PASS]`/`[FAIL]` lin
 
 ```json
 {
-  "pass": 9,
+  "pass": 19,
   "fail": 0,
-  "total": 9,
+  "total": 19,
   "checks": [
     { "check": "SKILL sync: review-advisor claude vs cursor", "status": "pass", "detail": "" },
+    { "check": "manifest generator artifacts match source",   "status": "pass", "detail": "" },
     { "check": "secret scan: leaked.txt",                  "status": "fail", "detail": "Credential leak: leaked.txt matches 1 secret pattern(s): 'WORKDESK_API_KEY=...'" }
   ]
 }
 ```
+
+The totals above reflect the current check set (19 with all manifest/drift checks passing). New checks append; `check` identifiers are stable across runs for the same failure.
 
 Fields:
 - `pass` / `fail` / `total` — integer counts
