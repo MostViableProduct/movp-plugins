@@ -14,6 +14,13 @@ Call all three simultaneously:
 2. Read `movp://control-plane/recommendations` resource — active control plane recommendations
 3. Call `get_review_status()` — recent review context
 
+**Degraded-mode fallback.** Each of these three calls is independent — proceed with whichever succeed.
+
+- If `movp://movp/suggested-rules` fails (MCP error, server unreachable, empty contents): emit `[MoVP] Suggested-rules unavailable — proceeding without pattern suggestions. Run /movp:doctor if this persists.` and skip Step 2's pattern section.
+- If `movp://control-plane/recommendations` fails: emit `[MoVP] Control-plane recommendations unavailable — proceeding without recommendations context.` and skip that section of Step 3.
+- If `get_review_status()` fails: emit `[MoVP] Review status unavailable — proceeding without recent review context.` and skip the "Recent Review Context" section.
+- If **all three** fail, abort with `[MoVP] /movp:optimize cannot run — all three data sources are unreachable. Run /movp:doctor to diagnose.`
+
 **Step 2 — Analyze patterns**
 
 From the suggested-rules data, identify:

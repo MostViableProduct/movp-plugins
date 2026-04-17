@@ -127,6 +127,28 @@ async function run() {
     }
   }
 
+  // Contract check: every manifest-declared resource must be readable without MCP error.
+  // FAKE_GATEWAY returns {} for BFF-backed resources; local resources (movp://movp/config,
+  // movp://movp/manifest) return {contents: [...]}. Both shapes are accepted; any JSON-RPC
+  // error or non-object result fails the smoke.
+  for (const uri of MANIFEST.resources) {
+    try {
+      const readResult = await client.send("resources/read", { uri });
+      if (readResult === null || typeof readResult !== "object") {
+        failures.push(`resources/read ${uri}: non-object result (got ${typeof readResult})`);
+      } else if (Array.isArray(readResult.contents)) {
+        for (const c of readResult.contents) {
+          if (!c.uri || typeof c.uri !== "string") {
+            failures.push(`resources/read ${uri}: content missing 'uri' string`);
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      failures.push(`resources/read ${uri}: ${err.message}`);
+    }
+  }
+
   client.close();
   clearTimeout(timer);
 

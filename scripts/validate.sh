@@ -692,6 +692,50 @@ fi
 
 $VER_OK && pass "MCP server version parity"
 
+# ── CHECK 14: generator artifacts match scripts/manifest.source.json ─────────
+# scripts/manifest.source.json is the single source of truth for:
+#   - pinned_mcp_server_version
+#   - tools[]
+#   - resources[]
+# The three platform manifest.json files and scripts/mcp-smoke/package.json
+# are generated from it by scripts/generate-manifests.sh. This check fails if
+# any committed output drifts from source-generated output.
+
+GENERATOR="scripts/generate-manifests.sh"
+GEN_OK=true
+
+if [[ ! -f "scripts/manifest.source.json" ]]; then
+  fail "generator: source missing" \
+    "scripts/manifest.source.json not found" \
+    "Fix: create scripts/manifest.source.json with pinned_mcp_server_version, tools, resources"
+  GEN_OK=false
+elif [[ ! -x "$GENERATOR" ]]; then
+  fail "generator: script missing or not executable" \
+    "$GENERATOR not found or not executable" \
+    "Fix: chmod +x $GENERATOR"
+  GEN_OK=false
+else
+  GEN_TMP=$(mktemp -d)
+  if ! OUT_ROOT="$GEN_TMP" bash "$GENERATOR" >/dev/null 2>&1; then
+    fail "generator: script failed" \
+      "$GENERATOR exited non-zero" \
+      "Fix: run $GENERATOR locally and inspect the error"
+    GEN_OK=false
+  else
+    for f in claude-plugin/manifest.json cursor-plugin/manifest.json codex-plugin/manifest.json scripts/mcp-smoke/package.json; do
+      if ! diff -q "$f" "$GEN_TMP/$f" >/dev/null 2>&1; then
+        fail "generator: drift" \
+          "$f differs from $GENERATOR output (source: scripts/manifest.source.json)" \
+          "Fix: bash $GENERATOR  # regenerates all artifacts from source"
+        GEN_OK=false
+      fi
+    done
+  fi
+  rm -rf "$GEN_TMP"
+fi
+
+$GEN_OK && pass "manifest generator artifacts match source"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 TOTAL=$((PASS + FAIL))
