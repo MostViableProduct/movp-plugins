@@ -18,9 +18,10 @@ emit_warn() {
 }
 
 # Run node probe: exit 2 = detected missing/empty; exit 1 = error/timeout (silent)
+# Pass the project directory explicitly — Claude Code hooks don't guarantee CWD is the project root.
 if command -v node >/dev/null 2>&1; then
   PROBE_EXIT=0
-  node "${SCRIPT_DIR}/mcp-probe.mjs" 2>/dev/null || PROBE_EXIT=$?
+  node "${SCRIPT_DIR}/mcp-probe.mjs" "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null || PROBE_EXIT=$?
   if [ "$PROBE_EXIT" -eq 2 ]; then
     emit_warn
   fi

@@ -17,7 +17,8 @@ import { join } from "path";
 const TIMEOUT_MS = 1800;
 
 function readConfig() {
-  const cfgPath = join(process.cwd(), ".mcp.json");
+  const projectDir = process.argv[2] || process.cwd();
+  const cfgPath = join(projectDir, ".mcp.json");
   if (!existsSync(cfgPath)) return null;
   try {
     const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
