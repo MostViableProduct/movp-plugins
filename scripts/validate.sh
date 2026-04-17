@@ -471,6 +471,64 @@ if m:
 fi
 $BREW_OK && pass "homebrew formula consistency"
 
+# ── CHECK 11: auto-review spec hygiene ────────────────────────────────────────
+# Guards against regressions of v1.2.0/1.2.1 findings:
+#   A. Registry-probe bug — movp://movp/registry must not be cited as a tool probe
+#      (MCP tools and MCP resources are separate). Any reference must sit within a
+#      "do NOT" / "Do NOT" / "DO NOT" window so the spec frames it as a negative rule.
+#   B. Exit-1 display trap — 'yq ... && diff' chains make successful writes look
+#      like failures because diff exits 1 when files differ.
+#   C. strenv() without export — yq serializes null if the env var isn't exported.
+
+HYGIENE_OK=true
+HYGIENE_FILES=(
+  claude-plugin/commands/auto-review.md
+  claude-plugin/skills/review-advisor/SKILL.md
+  codex-plugin/skills/review-advisor/SKILL.md
+  cursor-plugin/skills/review-advisor/SKILL.md
+)
+
+for f in "${HYGIENE_FILES[@]}"; do
+  [[ ! -f "$f" ]] && continue
+
+  # Rule A: references to movp://movp/registry must sit within a "do NOT" window.
+  while IFS= read -r hit; do
+    [[ -z "$hit" ]] && continue
+    lineno="${hit%%:*}"
+    start=$((lineno - 1))
+    end=$((lineno + 1))
+    [[ $start -lt 1 ]] && start=1
+    window=$(sed -n "${start},${end}p" "$f")
+    if ! echo "$window" | grep -qE 'do NOT|Do NOT|DO NOT'; then
+      fail "spec hygiene: $f:$lineno" \
+        "$f:$lineno references movp://movp/registry without an adjacent 'do NOT' warning" \
+        "Fix: either remove the reference or frame it explicitly as a negative rule (include 'do NOT' within 1 line)"
+      HYGIENE_OK=false
+    fi
+  done < <(grep -n 'movp://movp/registry' "$f" 2>/dev/null || true)
+
+  # Rule B: forbid 'yq ... && diff' on a single line.
+  if grep -nE 'yq[^#]*&&[[:space:]]*diff' "$f" > /dev/null 2>&1; then
+    fail "spec hygiene: $f" \
+      "$f: chained 'yq ... && diff' — diff exits 1 when files differ, making successful writes look like failures" \
+      "Fix: use ';' between yq and diff, or 'diff ... || true'"
+    HYGIENE_OK=false
+  fi
+
+  # Rule C: strenv(VAR) must be accompanied by 'export VAR' somewhere in the file.
+  while IFS= read -r var; do
+    [[ -z "$var" ]] && continue
+    if ! grep -qE "export[[:space:]]+$var" "$f"; then
+      fail "spec hygiene: $f" \
+        "$f: uses strenv($var) but never documents 'export $var' — yq will serialize null" \
+        "Fix: add 'export $var' before the yq example"
+      HYGIENE_OK=false
+    fi
+  done < <(grep -oE 'strenv\([A-Z_][A-Z0-9_]*\)' "$f" 2>/dev/null | sed -E 's/strenv\((.*)\)/\1/' | sort -u)
+done
+
+$HYGIENE_OK && pass "auto-review spec hygiene"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 TOTAL=$((PASS + FAIL))

@@ -2,6 +2,34 @@
 
 All notable changes to MoVP plugins are documented here. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.1 — 2026-04-17
+
+### Fixed
+
+- **`/movp:auto-review` MCP write-tool probe** now checks the session's deferred MCP tool list (authoritative) instead of reading `movp://movp/registry` (which never contains tool definitions). Matches the skill's own tool-vs-resource contract. Operators will see fewer "registry unreachable" errors in the write-ladder fallthrough.
+
+- **`/movp:auto-review on|off` is now idempotent.** A new Step 0 (read-before-write) compares current config to the target state and exits with `[MoVP] Auto-review: already <ON|OFF>. No changes made.` when they match — no cosmetic YAML drift on no-op invocations.
+
+- **`/movp:auto-review on` persists consent alongside the flag flip.** The command now writes `review.auto_review.consent.{schema_version, plugin_version, granted_at}` in the same write as the flag mutation. Explicit command invocation counts as consent — the skill's first-run prompt will not fire after an explicit `on`. Existing v1.2.0 users with flags already on but no consent converge on the next `on` invocation or on `y` to the skill's first-run prompt (whichever comes first).
+
+### Added
+
+- **`scripts/validate.sh` CHECK 11: auto-review spec hygiene.** Three scripted rules guard against regressions:
+  - Rule A — any reference to `movp://movp/registry` in the auto-review command or skill must sit within a `do NOT` / `Do NOT` / `DO NOT` context.
+  - Rule B — the `yq ... && diff` chain is forbidden (misleading exit-1 display pattern; `diff` exits 1 when files differ, masking successful writes).
+  - Rule C — `strenv(VAR)` usage must be paired with `export VAR` in the same file, otherwise `yq` silently serializes `null`.
+- Three matching fixture tests in `scripts/test-validate.sh` verify CHECK 11 catches each rule violation.
+
+### Changed
+
+- Command and skill specs now document `yq v4+` (Mike Farah's Go yq) as required; older versions and Python `yq` fall through to the refuse-safely path. Python `yq` lacks the pipeline and `strenv()` syntax used in the consent write.
+- Honest blast-radius note added for `yq -i`: it reserializes the full document, which can normalize inline-comment whitespace and shift unrelated sections' formatting. Content and semantics are preserved; cosmetic drift is possible. MCP `set_config` remains the long-term fix.
+- Write-once semantics pinned: `consent.granted_at` is set once and never refreshed on subsequent `on` invocations; `consent.plugin_version` records the version that originally obtained consent and only bumps on future consent-schema changes.
+
+### Migration
+
+Operators upgrading from v1.2.0 with flags already `on` and no consent record will either (a) see one prompt on the next auto-review (answer `y`, persisted), or (b) clear state by running `/movp:auto-review on` once (writes consent in-place without prompting). Both paths converge in a single action. No migration script needed.
+
 ## 1.2.0 — 2026-04-16
 
 ### Changed

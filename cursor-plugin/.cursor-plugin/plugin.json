@@ -1,6 +1,6 @@
 {
   "name": "movp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "MoVP control plane — adversarial review, health scores, recommendations, and constraint checks via MCP",
   "author": { "name": "MoVP" },
   "repository": "https://github.com/MostViableProduct/movp-plugins",

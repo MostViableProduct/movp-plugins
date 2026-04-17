@@ -407,6 +407,71 @@ output_clean=$(echo "$output" | grep -v '^EXIT:')
 assert_exit_code "CHECK 10 version skew: exits 1" 1 "$exit_code"
 assert_contains "CHECK 10 version skew: message" "url version" "$output_clean"
 
+# ── TEST 13: CHECK 11 Rule A — bare movp://movp/registry reference ───────────
+
+echo ""
+echo "=== TEST 13: CHECK 11 Rule A — registry-probe regression ==="
+FIXTURE=$(build_fixture)
+# Inject a bare reference without a "do NOT" window into the command file.
+cat > "$FIXTURE/claude-plugin/commands/auto-review.md" <<'EOF'
+---
+description: Test command
+---
+# Test
+Check `movp://movp/registry` for config-write tools.
+This paragraph continues a sentence but has no negative marker.
+EOF
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "rule A regression"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 11 Rule A: exits 1" 1 "$exit_code"
+assert_contains "CHECK 11 Rule A: message" "references movp://movp/registry without an adjacent 'do NOT'" "$output_clean"
+
+# ── TEST 14: CHECK 11 Rule B — yq && diff chain ──────────────────────────────
+
+echo ""
+echo "=== TEST 14: CHECK 11 Rule B — yq-and-diff chain ==="
+FIXTURE=$(build_fixture)
+cat > "$FIXTURE/claude-plugin/commands/auto-review.md" <<'EOF'
+---
+description: Test command
+---
+# Test
+Run: yq -i '.foo = true' file.yaml && diff before.yaml file.yaml
+EOF
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "rule B regression"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 11 Rule B: exits 1" 1 "$exit_code"
+assert_contains "CHECK 11 Rule B: message" "diff exits 1" "$output_clean"
+
+# ── TEST 15: CHECK 11 Rule C — strenv without export ─────────────────────────
+
+echo ""
+echo "=== TEST 15: CHECK 11 Rule C — strenv without export ==="
+FIXTURE=$(build_fixture)
+cat > "$FIXTURE/claude-plugin/commands/auto-review.md" <<'EOF'
+---
+description: Test command
+---
+# Test
+Example: `yq -i '.x = strenv(FOO)' file.yaml` — this will serialize null silently.
+EOF
+git -C "$FIXTURE" add -A && git -C "$FIXTURE" commit -q -m "rule C regression"
+
+output=$(run_validate_exit "$FIXTURE")
+exit_code=$(echo "$output" | grep '^EXIT:' | sed 's/EXIT://')
+output_clean=$(echo "$output" | grep -v '^EXIT:')
+
+assert_exit_code "CHECK 11 Rule C: exits 1" 1 "$exit_code"
+assert_contains "CHECK 11 Rule C: message" "strenv(FOO)" "$output_clean"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
