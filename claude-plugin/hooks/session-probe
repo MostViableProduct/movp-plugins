@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# MoVP SessionStart probe — stateless, best-effort, always exits 0.
+# Spawns the configured MCP server, checks tools/list.
+# Emits additionalContext warning only when MCP is clearly not working.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WARN_MSG="[MoVP] MCP tools not registered. Run /movp:doctor to diagnose."
+
+# Platform-aware emit: Claude Code wants hookSpecificOutput, Cursor wants additional_context
+emit_warn() {
+  if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    printf '{"additional_context":"%s"}\n' "$WARN_MSG"
+  elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$WARN_MSG"
+  else
+    printf '{"additionalContext":"%s"}\n' "$WARN_MSG"
+  fi
+}
+
+# Run node probe: exit 2 = detected missing/empty; exit 1 = error/timeout (silent)
+if command -v node >/dev/null 2>&1; then
+  PROBE_EXIT=0
+  node "${SCRIPT_DIR}/mcp-probe.mjs" 2>/dev/null || PROBE_EXIT=$?
+  if [ "$PROBE_EXIT" -eq 2 ]; then
+    emit_warn
+  fi
+fi
+# If node not available or probe returns 0 (healthy) or 1 (timeout/error): emit nothing
+
+exit 0

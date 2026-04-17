@@ -166,3 +166,5 @@ if [[ -z "$MOVP_TOOL" ]] || [[ "$MOVP_TOOL" == "codex" ]]; then
 fi
 
 echo "Need help? $MOVP_REPO#troubleshooting"
+echo
+echo "After init, restart your AI tool and run /movp:doctor to verify your setup."
