@@ -1,5 +1,7 @@
 ---
 description: "Check current adversarial review status"
+required_tools: [get_review_status]
+required_resources: []
 ---
 Check the current adversarial review status for this session.
 

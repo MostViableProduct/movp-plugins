@@ -5,6 +5,8 @@ description: >
   awareness, and constraint checks. Invoke at the start of every working
   session and when the user mentions project health, cost, stability,
   recommendations, anomalies, or constraints.
+required_tools: []
+required_resources: ["movp://control-plane/health-scores", "movp://control-plane/recommendations"]
 ---
 
 # MoVP Control Plane

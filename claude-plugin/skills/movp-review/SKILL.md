@@ -5,6 +5,8 @@ description: >
   Invoke after writing a plan file, completing a multi-file code change,
   or when the user asks for a review. Do not invoke for trivial edits,
   file reads, or git commands.
+required_tools: [trigger_review, get_review_status, resolve_review]
+required_resources: []
 ---
 
 # MoVP Adversarial Review

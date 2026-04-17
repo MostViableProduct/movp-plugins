@@ -1,5 +1,7 @@
 ---
 description: "Show MoVP connection and configuration status"
+required_tools: []
+required_resources: ["movp://movp/config", "movp://movp/manifest"]
 ---
 Read the MoVP effective config by accessing the `movp://movp/config` MCP resource, then present a clean status summary.
 
