@@ -14,6 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify plugin-manifest.json is up to date
+        run: |
+          node scripts/build-manifest.mjs
+          git diff --exit-code plugin-manifest.json || {
+            echo "::error::plugin-manifest.json is stale. Run scripts/build-manifest.mjs and commit the result."
+            exit 1
+          }
       - name: Run validation
         run: bash scripts/validate.sh
 
