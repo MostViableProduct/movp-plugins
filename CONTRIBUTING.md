@@ -75,6 +75,17 @@ The schema is stable for the current check set. Adding new checks appends new en
 
 All three plugin.json files and marketplace.json always share the same version. Never bump them independently — use `release.sh`.
 
+### Update /plugins page content
+
+Every release that changes commands, skills, hooks, install URLs, or verify steps must include:
+
+1. Regenerated `plugin-manifest.json` (run `node scripts/build-manifest.mjs`). CI validates this.
+2. A matching PR in `movp-bigwave-frontend-api-enabled` updating `payload-cms/seeds/plugin-page.json`.
+
+See: https://github.com/MostViableProduct/movp-bigwave-frontend-api-enabled/blob/main/payload-cms/DEPLOYMENT.md
+
+A release without the fixture update fails the frontend CI drift gate, and `/plugins` continues showing the previous release's capabilities until both PRs merge.
+
 ### MCP server pinning
 
 `scripts/manifest.source.json` is the single source of truth for the MCP server version pin and the declared tools/resources. After editing it, regenerate derived artifacts:

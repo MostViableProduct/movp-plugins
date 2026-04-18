@@ -1,0 +1,41 @@
+{
+  "version": "1.2.1",
+  "tools": {
+    "claude": {
+      "commands": [
+        "/movp:auto-review",
+        "/movp:doctor",
+        "/movp:optimize",
+        "/movp:review-status",
+        "/movp:review-stop",
+        "/movp:review-summarize",
+        "/movp:review",
+        "/movp:settings",
+        "/movp:status"
+      ],
+      "skills": [
+        "movp-control-plane",
+        "review-advisor"
+      ],
+      "hooks": [
+        "session-probe"
+      ]
+    },
+    "cursor": {
+      "commands": [],
+      "skills": [
+        "movp-control-plane",
+        "review-advisor"
+      ],
+      "hooks": []
+    },
+    "codex": {
+      "commands": [],
+      "skills": [
+        "movp-control-plane",
+        "review-advisor"
+      ],
+      "hooks": []
+    }
+  }
+}
