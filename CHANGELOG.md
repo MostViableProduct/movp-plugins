@@ -2,6 +2,12 @@
 
 All notable changes to MoVP plugins are documented here. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.2 — 2026-04-19
+
+### Fixed
+
+- **MCP server pinned to `@movp/mcp-server@0.1.15`** — fixes a regression exposed right after v1.3.1 shipped: bare `npx @movp/mcp-server@latest`, Cursor, and Codex invocations exited immediately with `ERROR: MOVP_URL and MOVP_API_KEY are required` even after a successful `npx @movp/cli init`. The CLI's device-auth flow writes `WORKDESK_URL` / `WORKDESK_ACCESS_TOKEN` / `WORKDESK_TENANT` to `~/.config/movp/credentials`, but the shim only looked up `MOVP_*` keys. 0.1.15 aliases the `WORKDESK_*` form into `MOVP_*` when the latter is absent, so any credentials file produced by a current CLI works across all three plugins. Claude Code sessions were unaffected (env injected from `~/.claude.json`).
+
 ## 1.3.1 — 2026-04-19
 
 ### Fixed
