@@ -2,6 +2,18 @@
 
 All notable changes to MoVP plugins are documented here. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.1 — 2026-04-19
+
+### Fixed
+
+- **MCP server pinned to `@movp/mcp-server@0.1.14`** — closes the Issue A + Issue B pair that together stranded sessions at "1 tool" and dropped the MCP stdio transport on transient errors.
+  - **Issue A (warm cache)**: `warmToolsCache` is now retried 3× at 1s/2s/4s, `movp://movp/manifest` lazy-fetches on cache miss with a 2s budget, and a shared `inflightWarm` promise coalesces concurrent reads (shipped upstream in 0.1.13, now reflected in the plugin pin).
+  - **Issue B (null-id emit loop)**: every stdout emit site in the shim now routes through a single `writeFrame` helper that drops orphan `error`+`id:null`+no-`method` frames before they trip the MCP client's Zod validator. `mcpPost` threads the inbound request id through every internal HTTP-error path; the parse-error path at the stdin reader no longer emits a null-id response (spec-aligned per JSON-RPC 2.0 §4.2) and logs a structured `parse_error` stderr event instead; notifications short-circuit before forwarding (§4.1). Structured stderr lines now carry `schema:"mcp_stdio/v1"`, `kind`, and `pid`; free-text that could echo secrets (URLs / JWTs / `wdg_`/`sk_`/`pk_` keys / raw CR-LF) is redacted at source.
+
+### Added
+
+- `scripts/mcp-smoke` lockfile regenerated against `@movp/mcp-server@0.1.14`; smoke test validates 8 tools + 6 resources including the three review tools end-to-end.
+
 ## 1.2.1 — 2026-04-17
 
 ### Fixed
