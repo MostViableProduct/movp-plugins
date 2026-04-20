@@ -77,6 +77,16 @@ class Movp < Formula
         movp cursor
         movp codex
 
+      Troubleshooting:
+        If Claude Code shows "[MoVP] MCP tools not registered" on session start,
+        re-run `movp init` inside the project — this regenerates ./.mcp.json,
+        which the session probe reads. Run /movp:doctor inside Claude Code to
+        diagnose further.
+
+        Claude Code users: `init` works with or without the `claude` CLI on
+        PATH. Without it, user-level registration in ~/.claude.json is skipped
+        but ./.mcp.json alone is sufficient for the session probe.
+
       Full docs: https://github.com/MostViableProduct/movp-plugins
     EOS
   end
