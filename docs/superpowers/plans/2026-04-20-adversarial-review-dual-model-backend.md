@@ -104,40 +104,74 @@ make test-e2e
 
 ---
 
-## Session checkpoint (Tasks 1–6 complete, as of 2026-04-21)
+## Session checkpoint (Tasks 1–6 + M7a complete, as of 2026-04-21)
 
 ### Last-known-green
 
-Commit: `28f9de2` on `feature/review-dual-model-v1.4.0-backend` (15 commits ahead of `main`).
+**Commit:** `e3347ac` on `feature/review-dual-model-v1.4.0-backend` (19 commits ahead of `main`, 42 files, +3947 / −42 lines).
+
+Exact commands to re-verify at this SHA:
 
 ```bash
 cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
+git log -1 --format='%H'                                                   # must print e3347ac...
 
-# Green as of the checkpoint:
-(cd services/workdesk && go build ./...)                                    # 0 errors
-(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums' -v)
-                                                                            # all subtests PASS
-(cd services/mcp && npm test)                                               # 195/195 across 9 files
-(cd services/mcp && npx tsc --noEmit)                                       # 0 errors
+# Green as of this checkpoint:
+(cd services/workdesk && go build ./...)                                   # 0 errors, silent output
+(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview' -v)
+                                                                           # all subtests PASS (added M7a's 6 TriggerReview subtests)
+(cd services/mcp && npm test)                                              # 200/200 across 9 files (was 195; +5 M7a trigger_review tests)
+(cd services/mcp && npx tsc --noEmit)                                      # 0 errors, silent output
 ```
+
+If any of those drift at commit `e3347ac`, the checkpoint is stale — treat as a regression and bisect before continuing.
 
 Pre-existing workdesk failure: `TestAcceptReview_Idempotent` — nil-pointer in `services/common/events/client.go:97`. Confirmed unrelated to this refactor (flagged during Task 5, reconfirmed each round since). Do NOT treat as a regression; leave it for whoever owns the events/client fix.
 
-### Deferred risk register
+### Deferred / closed-class risk register
 
-| ID | Item | Condition | Why acceptable now | Trigger to revisit |
-|---|---|---|---|---|
-| T6-I1 | TOCTOU between `postReviewTurn`'s preflight tenant SELECT and `InsertTurn`'s tenant SELECT | Two separate DB reads with no row lock between them | `tenant_id` on `adversarial_reviews` is immutable by convention (no code path in workdesk writes to that column), so the window can only surface as "row deleted mid-request" — which is already mapped to 404 via `ErrReviewNotFound`. Narrow, benign. | If a future migration or service starts writing `adversarial_reviews.tenant_id` after insert, collapse the two reads into a single tenant-validating query inside `InsertTurn` (`SELECT tenant_id WHERE id=$1 AND tenant_id=$2`). Also revisit if cross-tenant leak canary (§ 7e) fires. |
+| ID | Status | Item | Condition | Why acceptable now | Trigger to revisit |
+|---|---|---|---|---|---|
+| T6-I1 | **Deferred** | TOCTOU between `postReviewTurn`'s preflight tenant SELECT and `InsertTurn`'s tenant SELECT | Two separate DB reads with no row lock between them | `tenant_id` on `adversarial_reviews` is immutable by convention (no code path in workdesk writes to that column), so the window can only surface as "row deleted mid-request" — which is already mapped to 404 via `ErrReviewNotFound`. Narrow, benign. | If a future migration or service starts writing `adversarial_reviews.tenant_id` after insert, collapse the two reads into a single tenant-validating query inside `InsertTurn` (`SELECT tenant_id WHERE id=$1 AND tenant_id=$2`). Also revisit if cross-tenant leak canary (§ 7e) fires. |
+| M7a-I1 | **Closed-class rule** | Any idempotency-like lookup MUST run after tenant-enabled gate + artifact-type / resource-allowlist gate, and before rate-limit counter. | Key-replay could short-circuit past config-level gates if ordering is inverted | Root cause of the original bug is generic: replay tokens are cheap and pre-gate lookups let them bypass policy. Applies to any future endpoint that adds an idempotency / dedupe path. | Regression test guard: `TestTriggerReview_IdempotencyGatedByEnabled` in `services/workdesk/review_test.go`. Any similar endpoint should ship with an analogous test. |
 
 ### Task 7 pre-split guidance
 
 Task 7 extends three MCP tools. Implement them as **three internal milestones** (commit or subagent boundary, your choice) even if the final release bundles them:
 
-1. **M7a — `trigger_review` extension.** Accept `client_tool`, `idempotency_key`, `force_refresh`, `parent_review_id`, `prior_rationale`. Pair-validation + credential-catalog gate. Pins `config_revision` + `effective_threshold` onto the review row.
+1. **M7a — `trigger_review` extension.** Accept `client_tool`, `idempotency_key`, `force_refresh`, `parent_review_id`, `prior_rationale`. Pair-validation + credential-catalog gate. Pins `config_revision` + `effective_threshold` onto the review row. **✅ Complete at commit `e3347ac`.**
 2. **M7b — `get_review_status` extension.** Response gains `round`, `client_tool`, `dual_model`, `adversary_model_id`, `composite_score`, `effective_threshold`, `stop_reason`, `redactions_summary`, 7th category. Preserves v1.3.x `parsing_text` verbatim. Deprecation marker on argument-less call.
 3. **M7c — `resolve_review` tightening.** `retry` only when `status=error`.
 
 Each milestone should produce its own PR-sized commit or subagent dispatch so review findings land locally and don't mix concerns across the three tool surfaces.
+
+### M7b response-shape contract test matrix (to be written BEFORE implementation)
+
+Spec-driven schema drift bit us in M7a (trigger_review JSON schema was stale). For M7b, predefine the contract matrix first and write the tests against that matrix as TDD:
+
+| Caller shape | `review_id` passed? | Mode | Expected response fields | Expected `_meta.deprecated` |
+|---|---|---|---|---|
+| v1.3.x plugin | yes | N/A (single-model review on the row) | `review_id`, `status`, `category_scores` (6 keys), `parsing_text` with `Quality:X/10` + `Cost:$N` lines. New v1.4.0 fields present but legacy clients ignore them. | absent |
+| v1.4.0 client, single-model review row | yes | `dual_model=false` on the row | Above, plus: `round`, `client_tool=null`, `dual_model=false`, `adversary_model_id=null`, `composite_score` (6-cat weighted), `effective_threshold=9.0`, `stop_reason`, `redactions_summary` (JSON object with all category keys, zero-filled). `category_scores` has 6 keys (no `observability`). | absent |
+| v1.4.0 client, dual-model review row | yes | `dual_model=true` on the row | Above, plus: `client_tool` ∈ canonical set, `adversary_model_id` ∈ known model set, `composite_score` (7-cat weighted), `effective_threshold=9.2`, `category_scores` has 7 keys (includes `observability`). | absent |
+| arg-less call (v1.3.x legacy) | **no** | whatever the most-recent review is | Same shape as the appropriate row above | **present** — `{removed_in: "1.5.0", guidance: "pass review_id explicitly"}` |
+
+Write one Vitest test per row of the matrix against `get_review_status` before touching the handler. Assert response-field presence and shape, not just content. This locks the contract surface and prevents a repeat of the M7a schema-staleness finding.
+
+### Task 7 definition of done
+
+Task 7 is not done until ALL of the following hold:
+
+- [ ] M7a complete (✅ at `e3347ac`).
+- [ ] M7b complete with the four contract-matrix tests above passing.
+- [ ] M7c complete: `resolve_review` rejects `retry` when `status != error` (new test); existing retry-on-error path still passes.
+- [ ] The `get_review_status` JSON schema in `services/mcp/index.ts` advertises every new structured field (same schema-staleness guard M7a's `8ff0657` applied to `trigger_review`).
+- [ ] `TestTriggerReview_*` (M7a), `TestGetReviewStatus_*` (M7b), `TestResolveReview_RetryTightened` (M7c) all pass in one workdesk run.
+- [ ] Full mcp `npm test` passes (≥ 200 tests — current floor, goes up as M7b/M7c add dispatch tests).
+- [ ] `tsc --noEmit` clean.
+- [ ] Go build clean.
+- [ ] Risk register entries added/updated if any Important finding is deferred.
+- [ ] "Last-known-green" section in this plan bumped to the new head SHA.
 
 ---
 
