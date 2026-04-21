@@ -21,6 +21,21 @@ The refactor adds:
 
 ---
 
+## Executive summary
+
+- **Artifacts (5):** backend (`big-wave/services/mcp` + review service), frontend (web UI Model Pairs page), `claude-plugin`, `codex-plugin`, `cursor-plugin`. Aligned release train at v1.4.0.
+- **Default posture:** `review.dual_model=false` for every existing tenant. New behavior is strictly opt-in per tenant via the web UI or `.movp/config.yaml`. No silent flag flips, ever.
+- **Legacy parity:** when the flag is off, the backend, tools, and plugin command behave exactly as v1.3.2 — 6 categories, threshold 9.0, no turn capture, no rationale. CI-gated by `review-parity.spec.ts` (§ 1e).
+- **New behavior (flag on):** 7 categories (adds `observability`), weighted composite, threshold 9.2, per-finding Primary rationale captured server-side, different-family Adversary routing via per-client pair map.
+- **Rollout sequence:** backend → frontend → plugins (lock-step) → 14-day MoVP-tenant dogfood → opt-in early access → GA default-on for *new* tenants only.
+- **Read order:**
+  - **Product / UX reviewers:** Context → Decisions locked → § 2 (web UI) → § 6a–6g (operator-visible command flow) → § 7c (dogfood).
+  - **Backend implementers:** § 1 (invariants) → § 4 (schema + redaction) → § 5 (MCP API) → § 7b (CI gates).
+  - **Plugin implementers:** § 6 (full) → § 3 (config) → § 5b/5c/5e (tool contracts).
+  - **Security / ops reviewers:** § 4d (redaction trust boundary) → § 5h/5i (errors + authn) → § 7e (SLIs + canary) → § 7f (rollback) → § 7j (risks).
+
+---
+
 ## Decisions locked during brainstorming
 
 | # | Decision |
@@ -546,7 +561,7 @@ Steps, all in a single transaction:
 `big-wave/services/review/__tests__/redaction.spec.ts`:
 
 - **Positive corpus** — one fixture file per category under `__tests__/fixtures/redaction/positive/<category>.txt` with realistic examples (in prose, JSON, YAML, code comments). Asserts every example redacted.
-- **Negative corpus** — `__tests__/fixtures/redaction/negative.txt`. Strings resembling credentials but aren't (UUIDs, base64 of non-secret data, SHA hashes, the word "password" without assignment). Asserts these stay unredacted.
+- **Negative corpus** — `__tests__/fixtures/redaction/negative.txt`. Credential-shaped strings that are *not* credentials (UUIDs, base64 of non-secret data, SHA hashes, the word "password" without assignment). Asserts these stay unredacted. *Email addresses are intentionally not in the negative corpus — emails are redacted by design even when they are "content" rather than "credential." Fixtures that want "email as non-redacted content" belong in a separate bucket (`__tests__/fixtures/redaction/email-as-content.txt`) and are tested only against non-email patterns.*
 - **JSON-walk invariant** — adversary-output JSON with secrets embedded → redact → parse; parse must succeed; all secrets replaced.
 - **Trust-boundary test** — spy on the HTTP client to the Adversary API (asserts it sees unredacted content); spy on the DB layer (asserts only post-redaction content); locks in § 4d trust boundary against regression.
 - **Perf budget** — redacting a 256 KB artifact completes in < 150 ms p95 on CI.
@@ -1031,21 +1046,26 @@ Outer contract unchanged: post-artifact, auto-triggered, single Adversary pass, 
 4. First-run consent prompt and parsing spec unchanged.
 5. SKILL.md gains a "Relationship to `/movp:review`" section pointing to this spec for the rationale-producing loop.
 
-### § 6i. `dual_model=false` fallback
+### § 6i. `dual_model=false` fallback — legacy single-model path (v1.3.x parity)
 
-Clean strict subset of the dual-model path:
+When `dual_model=false`, the loop runs the legacy v1.3.x algorithm — it does **not** traverse § 6d (which is gated on `dual_model=true` and `findings.length > 0`). The legacy algorithm in full:
 
-1. `trigger_review` sends `client_tool` (advisory); omits `prior_rationale`, `parent_review_id`.
-2. No Turn 3 rationale capture. Round ends with auto-accept/auto-apply per § 6d (v1.3.x parity); no `record_primary_turn`.
-3. `effective_threshold = review.legacy_threshold` (default 9.0).
-4. Post-loop output omits the "Review lineage" line.
-5. First-line banner:
+1. `trigger_review` sends `client_tool` (advisory only; backend ignores for pair routing); omits `prior_rationale` and `parent_review_id`.
+2. After Turn 2 completes, without prompting the operator:
+   - Auto-implement every CRIT and HIGH finding (apply the suggested fix).
+   - Use judgment on MED findings — apply when fix is low-cost and benefit is clear; skip otherwise.
+   - Default-skip LOW findings unless they flag a correctness issue the severity misjudged.
+3. No Turn 3 rationale is captured. No `record_primary_turn` is called. No `rationale` is threaded into the next round.
+4. **No-op guard** — if zero findings were applied AND no file was modified, set `stop_reason="no_progress"` and exit the loop. (Same guard as § 6d, restated here so the legacy path doesn't rely on the dual-model prose.)
+5. `effective_threshold = review.legacy_threshold` (default 9.0) — not `review.threshold`.
+6. Post-loop output omits the "Review lineage" line (no `parent_review_id` threading happens in this mode).
+7. First-line banner:
    ```
    [MoVP] Single-model review mode (dual_model=false).
           Enable model pairs in /movp:settings for 4-turn dual-model protocol.
    ```
 
-All deltas flagged by persisted columns (`dual_model`, `effective_threshold`, `parent_review_id IS NULL`) — parity test suite (§ 1e) asserts structural equivalence with v1.3.x.
+All deltas are flagged by persisted columns on the review row (`dual_model=FALSE`, `effective_threshold=9.0`, `parent_review_id IS NULL`, no matching rows in `adversarial_review_turns` with `turn_number=2` and `role='primary'`) — parity test suite (§ 1e) asserts structural equivalence with v1.3.2 reviews.
 
 ### § 6j. Error handling map
 
