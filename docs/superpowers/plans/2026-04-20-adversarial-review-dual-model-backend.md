@@ -104,28 +104,28 @@ make test-e2e
 
 ---
 
-## Session checkpoint (Tasks 1–8 complete, as of 2026-04-21)
+## Session checkpoint (Tasks 1–9 complete, as of 2026-04-21)
 
 ### Last-known-green
 
-**Commit:** `37cff0c` on `feature/review-dual-model-v1.4.0-backend` (27 commits ahead of `main`).
+**Commit:** `93f0227` on `feature/review-dual-model-v1.4.0-backend` (29 commits ahead of `main`).
 
 Exact commands to re-verify at this SHA:
 
 ```bash
 cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
-git log -1 --format='%H'                                                   # must print 37cff0c...
-git rev-list main..HEAD --count                                            # must print 27
+git log -1 --format='%H'                                                   # must print 93f0227...
+git rev-list main..HEAD --count                                            # must print 29
 
 # Green as of this checkpoint:
 (cd services/workdesk && go build ./...)                                   # 0 errors, silent output
-(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns' -v)
-                                                                           # all subtests PASS (Tasks 5-8 + M7a/M7b/M7c coverage)
-(cd services/mcp && npm test)                                              # 217/217 across 10 files
+(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns|^TestReviewAttributes|^TestAdversaryProvider|^TestRecordReviewStop|^TestRecordRedactions' -v)
+                                                                           # all subtests PASS (Tasks 5-9 + M7a/M7b/M7c coverage)
+(cd services/mcp && npm test)                                              # 220/220 across 11 files
 (cd services/mcp && npx tsc --noEmit)                                      # 0 errors, silent output
 ```
 
-If any of those drift at commit `37cff0c`, the checkpoint is stale — treat as a regression and bisect before continuing.
+If any of those drift at commit `93f0227`, the checkpoint is stale — treat as a regression and bisect before continuing.
 
 Pre-existing workdesk failure: `TestAcceptReview_Idempotent` — nil-pointer in `services/common/events/client.go:97`. Confirmed unrelated to this refactor (flagged during Task 5, reconfirmed each round since). Do NOT treat as a regression; leave it for whoever owns the events/client fix.
 
@@ -194,13 +194,67 @@ Reviewers: flag any new handler that doesn't honor these rules.
 
 ### Remaining tasks — dependency map
 
-| Task | Depends on | Affects | Size | Key posture reminder |
-|---|---|---|---|---|
-| **Task 8** — `movp://movp/reviews/<id>/turns` MCP resource | Task 1 (turn table), Task 6 (turn handlers) | Read surface for turn data the rule-suggestion pipeline consumes | Medium | Resource read paths follow § 5g: cross-tenant → 404, not 403. Empty turns → `{turns: []}`, not null. |
-| **Task 9** — OTel spans + metrics | All earlier tasks (instruments them) | Closes `trace_id` and `client_generated_at` TODOs from Task 6 + M7a | Medium-Large | Spans named per § 1c (`review.trigger`, `review.adversary.call`, `review.primary_turn.record`, `review.stop`). Metrics via counter + histogram. Honeycomb dashboards (§ 7e) are ops activity, not code. |
-| **Task 10** — Parity regression + dual-model e2e | All earlier tasks | CI gate for the v1.4.0 release (§ 7b Stage 1) | Large | Regression: `dual_model=false` path preserves v1.3.x contract exactly. E2E: stubbed adversary drives 2-round loop end-to-end, asserts turn table + composite + stop_reason transitions. |
+| Task | Depends on | Affects | Size | Key posture reminder | Status |
+|---|---|---|---|---|---|
+| Task 8 — `movp://movp/reviews/<id>/turns` MCP resource | Task 1 (turn table), Task 6 (turn handlers) | Read surface for turn data the rule-suggestion pipeline consumes | Medium | Resource read paths follow § 5g: cross-tenant → 404, not 403. Empty turns → `{turns: []}`, not null. | ✅ `37cff0c` |
+| Task 9 — OTel spans + metrics | All earlier tasks (instruments them) | Closes `trace_id` and `client_generated_at` TODOs from Task 6 + M7a | Medium-Large | Spans named per § 1c (`review.trigger`, `review.adversary.call`, `review.primary_turn.record`, `review.stop`). Metrics via counter + histogram. Honeycomb dashboards (§ 7e) are ops activity, not code. | ✅ `93f0227` |
+| **Task 10** — Parity regression + dual-model e2e | All earlier tasks | CI gate for the v1.4.0 release (§ 7b Stage 1) | Large | Regression: `dual_model=false` path preserves v1.3.x contract exactly. E2E: stubbed adversary drives 2-round loop end-to-end, asserts turn table + composite + stop_reason transitions. | ⏳ next |
 
-When dispatching Task 8/9/10 subagents, paste this dependency row verbatim at the top of the prompt so the implementer and reviewers share the same integration context.
+When dispatching a Task 10 subagent, paste this dependency row verbatim at the top of the prompt so the implementer and reviewers share the same integration context.
+
+### Temporal-worker-boundary non-goals for v1.4.0
+
+Two instrumentation gaps from Task 9 are **explicit non-goals** for the v1.4.0 release. They live in `services/temporal-worker/` (outside this worktree's feature branch) and will be wired in a follow-up release, tracked as:
+
+1. **`review.adversary.call` span emission** — the Adversary LLM call happens in the Temporal workflow. W3C trace context is already propagated via the HTTP `traceparent` header (`services/common/otel/http_client.go` instrumentation), so the span parenting works once the worker-side span is added. No `services/workdesk/` work required.
+2. **`review.stop` span + `recordReviewStop` call** — the `stop_reason` column is written by the workflow when a review terminates. The `recordReviewStop` helper is exported from `services/workdesk/review_telemetry.go` specifically so the Temporal activity can call it; the Task 10 e2e tests drive a review end-to-end and assert the counter/histogram fire.
+
+Owner: whoever owns `services/temporal-worker/` for the v1.4.1 release cut. Do NOT re-open these in Task 10 review — they are bounded scope-defects and have a documented landing path.
+
+### Task 10 acceptance preflight (CI gate definition)
+
+Before marking Task 10 complete, every one of these MUST hold. Reviewers use this checklist as the merge gate for the v1.4.0 release per spec § 7b Stage 1.
+
+**Parity regression suite** (`services/workdesk/dual_model_parity_test.go` + `services/mcp/dual-model-parity.test.ts`):
+- [ ] `dual_model=false` review: `trigger_review` → `get_review_status` → `resolve_review(accept)` produces identical response bodies (field-for-field via golden fixture) to v1.3.2 baseline. Any new field present is `null` / `false` / absent.
+- [ ] `get_review_status` without `review_id` still returns the most-recent review + deprecation marker (§ 5c).
+- [ ] Legacy tenants without `model_pairs` configured see no pair validation error on `trigger_review` when `dual_model=false`.
+
+**Dual-model e2e** (`services/workdesk/dual_model_e2e_test.go`):
+- [ ] Stubbed adversary drives a 2-round loop end-to-end with `dual_model=true`.
+- [ ] `adversarial_review_turns` has exactly 3 rows: round 1 primary (turn 1 implicit — existing pattern), round 1 adversary (turn 1), round 2 adversary (turn 1). Primary turn for round 2 is the synthesized record_primary_turn call.
+- [ ] `composite_score` on the final review row is computed from 7 categories (includes observability) via the weighted formula.
+- [ ] `stop_reason` transitions: round 1 → null (in progress), round 2 → `threshold_met` | `max_rounds` | etc.
+- [ ] `effective_threshold` pinned on row matches the config at trigger time (`threshold` for dual-model, `legacy_threshold` otherwise).
+- [ ] `redactions` JSONB on parent row is the category-wise sum of turn redactions (spec § 4f roll-up).
+
+**Telemetry wiring** (closes Task 9 Important findings):
+- [ ] `recordReviewStop` is invoked from every terminal path (even if those paths are partly in Temporal; the e2e stub exercises them and asserts the counter increments).
+- [ ] `adversaryProviderFromModelID` matrix test: `"openai/gpt-5.4"` → `"openai"`, `"claude-sonnet-4-6"` → `""` (unnamespaced — documents the deliberate choice), `nil` → `""`, `"/leading"` → `""`.
+- [ ] Metric label cardinality stays bounded: `review.rounds_total` labels ⊂ {`stop_reason`, `client_tool`, `adversary_provider`}; histogram labels ⊂ {`client_tool`, `adversary_provider`}; `review.redactions_total` labels ⊂ {`category`}. No `review_id` or `tenant_id` on metric labels (they're span-only).
+
+**CI commands** (exact, for the merge gate):
+
+```bash
+cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
+
+# Go
+(cd services/workdesk && go build ./...)
+(cd services/workdesk && go test -v ./... -count=1 -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns|^TestReviewAttributes|^TestAdversaryProvider|^TestRecordReviewStop|^TestRecordRedactions|^TestDualModelParity|^TestDualModelE2E')
+# Expect: all PASS. TestAcceptReview_Idempotent is known-unrelated and excluded.
+
+# TypeScript
+(cd services/mcp && npm test)
+(cd services/mcp && npx tsc --noEmit)
+# Expect: all PASS (floor 220 + Task-10 additions), tsc clean.
+
+# Full service-level suites (optional for pre-merge; required for release)
+(cd services/workdesk && go test -v ./... -count=1)
+(cd services/mcp && npm run test:ci)
+# Expect: all PASS except documented pre-existing TestAcceptReview_Idempotent.
+```
+
+Any command above must return 0. Failure blocks the merge.
 
 ---
 
