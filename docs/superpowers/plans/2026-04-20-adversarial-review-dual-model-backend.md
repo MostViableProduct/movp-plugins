@@ -47,6 +47,63 @@
 
 ---
 
+## Migration ownership (two runners, one schema)
+
+Two distinct migration systems own different slices of the schema. Writes must land in the right one:
+
+| Runner | Path | Owns |
+|---|---|---|
+| **Workdesk Go** (`db.Migrate(...)` wrapper in `services/common/db/postgres.go`) | `services/workdesk/migrate.go` | Table DDL: `CREATE TABLE`, `ALTER TABLE ADD COLUMN`, CHECK constraints, indexes. Runs on workdesk service startup, idempotent per block. |
+| **Supabase CLI** | `supabase/migrations/YYYYMMDDHHMMSS_*.sql` | RLS policies, helper functions, `GRANT`s, anything the Supabase PostgREST layer consumes. Applied via `supabase db push` or `supabase db reset` in CI. |
+
+**Do not duplicate DDL across the two runners** — Supabase migrations should reference tables that already exist (created by workdesk) and only layer policy/permission concerns on top. Task 1 follows this split: column additions + new table go in `migrate.go`; RLS for the new table goes in the Supabase migration file. Future backend tasks adding tables must do the same.
+
+## Merge sequence (tasks are parallel-authorable, not parallel-mergeable)
+
+Tasks 3–10 are independent enough to be **authored in parallel** by different agents on separate branches. But integrating them back to `feature/review-dual-model-v1.4.0-backend` (or directly to `main`) requires an order — later tasks assume earlier tasks' symbols and schema are already landed. Suggested merge order:
+
+```
+Task 1 (DDL) → Task 2 (config) → {Task 3 (provider catalog), Task 5 (weights + scoring)}
+  → Task 4 (redaction) → Task 6 (turn persistence)
+  → Task 7 (extended tools) → Task 8 (turns resource) → Task 9 (OTel) → Task 10 (parity + e2e)
+```
+
+Rationale for the strictly-ordered edges:
+- **Task 1 before Task 6** — `adversarial_review_turns` must exist before turn-insert code compiles against it.
+- **Task 2 before Task 7** — extended `trigger_review` reads `dual_model` and `model_pairs` from the resolved config.
+- **Task 3 before Task 7** — `trigger_review` validation uses the provider catalog for the "no credential" error path.
+- **Task 4 before Task 6** — `record_primary_turn` redacts `rationale` + `artifact_after` before INSERT; redaction module must exist.
+- **Task 5 before Task 7** — `get_review_status` response carries the composite score.
+- **Task 10 last** — parity + e2e tests exercise the full stack end-to-end.
+
+If parallel branches land out of order, expect merge conflicts in `services/mcp/tools/dispatch.ts` and `services/workdesk/reviews.go` (the two hot spots where multiple tasks touch the same functions).
+
+## CI commands for this branch
+
+Record these once so future sessions don't re-derive them:
+
+```bash
+# Worktree root
+cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
+
+# MCP service (TypeScript / Vitest)
+cd services/mcp && npm test
+cd services/mcp && npm test -- <test-file>.test.ts --reporter=verbose   # single file
+
+# Workdesk service (Go)
+cd services/workdesk && go test -v ./... -count=1
+cd services/workdesk && go test -run '^TestXxx' -v                      # specific test(s)
+
+# Compile-only checks
+go build ./services/workdesk/...
+cd services/mcp && npx tsc --noEmit
+
+# Full stack end-to-end (from repo root)
+make test-e2e
+```
+
+---
+
 ## Task 1: DDL — add columns to `adversarial_reviews` + create `adversarial_review_turns`
 
 **Files:**
