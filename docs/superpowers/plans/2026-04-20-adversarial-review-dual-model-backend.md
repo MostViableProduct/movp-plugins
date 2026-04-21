@@ -142,6 +142,26 @@ git diff --shortstat main                                                  # mus
 
 If any of those drift at commit `545f232` (other than the documented `TestAcceptReview_Idempotent` flake), the checkpoint is stale — treat as a regression and bisect before continuing.
 
+### Release readiness — honest merge-policy statement
+
+Merge readiness depends on the org's CI policy. This branch is:
+
+- **OK to merge** if CI policy runs the documented green slice (spot-regex below) OR treats the one known-red test as tracked-debt OR fixes/skips it with an owner.
+- **Not OK to merge** on teams where `go test ./...` must be fully green with no exceptions — because today it isn't. Don't hide this behind narrative.
+
+**Known-red on this branch** (pre-existing, not a Task 1–10 regression):
+
+```
+FAIL: services/workdesk/TestAcceptReview_Idempotent
+  expected 204, got 500
+  Root cause: nil natsClient global-state leak from
+  TestIntegration_FullWorkdesk when alphabetical test ordering runs
+  Accept_ before Integration_. The failure does NOT reproduce when
+  the test file is filtered (e.g. `go test -run '^TestAcceptReview_'`)
+  because the global is lazily initialized by its own code path.
+  Owner: outside this feature branch. Track via an issue (see below).
+```
+
 ### Release readiness checklist (for the v1.4.0 backend PR)
 
 PR body should include:
@@ -150,6 +170,30 @@ PR body should include:
 2. **Risk focus for review:** (a) dual-model cost multiplier (2× adversary calls per round vs v1.3.2); (b) fail-hard-and-loud behavioral changes in retry / resolve / include_content paths; (c) new MCP resource surface (movp://movp/reviews/<id>/turns).
 3. **v1.4.1 tracking:** link the Temporal-worker-boundary non-goals issue (see "Temporal-worker-boundary non-goals for v1.4.0" section earlier in this plan). Required for full `review.adversary.call` + `review.stop` emission + production `recordReviewStop` wiring.
 4. **Metrics-to-watch post-deploy:** `review.rounds_total`, `review.round_duration_seconds`, `review.redactions_total` — all emitted but unwired at terminal paths until v1.4.1 Temporal-worker PR lands. Dashboards should note this or mark these as "coming online v1.4.1" to avoid false-negative alerting.
+5. **Pre-existing failing test — DO NOT obscure in the PR body:**
+   ```
+   go test ./services/workdesk/... -count=1  →  FAIL TestAcceptReview_Idempotent
+     (pre-existing, tracked: <issue-link>; not introduced by this PR)
+   Green slice this PR is verified against:
+     go test -count=1 -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns|^TestReviewAttributes|^TestAdversaryProvider|^TestRecordReviewStop|^TestRecordRedactions|^TestDualModelParity|^TestDualModelE2E'
+   ```
+6. **Open a tracking issue** (outside this feature branch) before merging, titled something like `TestAcceptReview_Idempotent global-state leak from TestIntegration_FullWorkdesk`. Include the repro (run `go test ./services/workdesk/... -count=1` on any SHA; fails deterministically), root-cause suspicion (nil natsClient), and the workaround path used by Task 6 / M7c / Task 10 (`withNoopNats` helper). Link the issue from the PR body under "Known debt, NOT introduced by this PR." This prevents v1.4.0 from inheriting permanent `red main` risk.
+
+### CI configuration recommendation
+
+Until the test is fixed out-of-band, the CI job that gates this PR should explicitly match the green slice documented in Last-known-green above. One of these three is acceptable:
+
+- **Option A — match the green slice** (least invasive):
+  ```yaml
+  # .github/workflows/<whatever>.yml  (or equivalent)
+  - name: Go tests (green slice for v1.4.0 backend)
+    run: |
+      go test -count=1 -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns|^TestReviewAttributes|^TestAdversaryProvider|^TestRecordReviewStop|^TestRecordRedactions|^TestDualModelParity|^TestDualModelE2E' ./services/workdesk/...
+  ```
+- **Option B — skip the known-red test** with `-skip 'TestAcceptReview_Idempotent'` on Go 1.20+, linked to the tracking issue.
+- **Option C — fix first, then merge.** Ideal if the fix is cheap. Likely is: `TestMain` adds `natsClient = events.NewNoopClientForTest()` before any package-level test runs.
+
+Pick one, make it explicit in the PR, merge with confidence.
 
 ### Post-merge smoke checklist (staging tenant)
 
