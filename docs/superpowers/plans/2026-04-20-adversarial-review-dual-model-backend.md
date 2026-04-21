@@ -104,27 +104,28 @@ make test-e2e
 
 ---
 
-## Session checkpoint (Tasks 1–6 + M7a complete, as of 2026-04-21)
+## Session checkpoint (Tasks 1–7 complete, as of 2026-04-21)
 
 ### Last-known-green
 
-**Commit:** `e3347ac` on `feature/review-dual-model-v1.4.0-backend` (19 commits ahead of `main`, 42 files, +3947 / −42 lines).
+**Commit:** `d5e796e` on `feature/review-dual-model-v1.4.0-backend` (24 commits ahead of `main`, 43 files, +4771 / −60 lines).
 
 Exact commands to re-verify at this SHA:
 
 ```bash
 cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
-git log -1 --format='%H'                                                   # must print e3347ac...
+git log -1 --format='%H'                                                   # must print d5e796e...
+git rev-list main..HEAD --count                                            # must print 24
 
 # Green as of this checkpoint:
 (cd services/workdesk && go build ./...)                                   # 0 errors, silent output
-(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview' -v)
-                                                                           # all subtests PASS (added M7a's 6 TriggerReview subtests)
-(cd services/mcp && npm test)                                              # 200/200 across 9 files (was 195; +5 M7a trigger_review tests)
+(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview' -v)
+                                                                           # all subtests PASS (Task 6 + M7a/M7b/M7c coverage)
+(cd services/mcp && npm test)                                              # 211/211 across 9 files
 (cd services/mcp && npx tsc --noEmit)                                      # 0 errors, silent output
 ```
 
-If any of those drift at commit `e3347ac`, the checkpoint is stale — treat as a regression and bisect before continuing.
+If any of those drift at commit `d5e796e`, the checkpoint is stale — treat as a regression and bisect before continuing.
 
 Pre-existing workdesk failure: `TestAcceptReview_Idempotent` — nil-pointer in `services/common/events/client.go:97`. Confirmed unrelated to this refactor (flagged during Task 5, reconfirmed each round since). Do NOT treat as a regression; leave it for whoever owns the events/client fix.
 
@@ -158,20 +159,48 @@ Spec-driven schema drift bit us in M7a (trigger_review JSON schema was stale). F
 
 Write one Vitest test per row of the matrix against `get_review_status` before touching the handler. Assert response-field presence and shape, not just content. This locks the contract surface and prevents a repeat of the M7a schema-staleness finding.
 
-### Task 7 definition of done
+### Task 7 definition of done (complete at `d5e796e`)
 
-Task 7 is not done until ALL of the following hold:
+All boxes closed:
 
-- [ ] M7a complete (✅ at `e3347ac`).
-- [ ] M7b complete with the four contract-matrix tests above passing.
-- [ ] M7c complete: `resolve_review` rejects `retry` when `status != error` (new test); existing retry-on-error path still passes.
-- [ ] The `get_review_status` JSON schema in `services/mcp/index.ts` advertises every new structured field (same schema-staleness guard M7a's `8ff0657` applied to `trigger_review`).
-- [ ] `TestTriggerReview_*` (M7a), `TestGetReviewStatus_*` (M7b), `TestResolveReview_RetryTightened` (M7c) all pass in one workdesk run.
-- [ ] Full mcp `npm test` passes (≥ 200 tests — current floor, goes up as M7b/M7c add dispatch tests).
-- [ ] `tsc --noEmit` clean.
-- [ ] Go build clean.
-- [ ] Risk register entries added/updated if any Important finding is deferred.
-- [ ] "Last-known-green" section in this plan bumped to the new head SHA.
+- [x] M7a complete (`e3347ac` — tightened idempotency ordering, response shape unified, log breadcrumb added).
+- [x] M7b complete with the four contract-matrix tests passing (`6818a4f` — listReviews SELECT extended to match getReview).
+- [x] M7c complete: `resolve_review` rejects `retry` when `status != error`, with structured 400 body (`d5e796e` — convention comment + dedup-replay test guard).
+- [x] `get_review_status` tool input-schema advertised — verified unchanged in v1.4.0 (no new input params; `review_id` + `session_id` stay the documented surface).
+- [x] `trigger_review` schema updated (`8ff0657`) to advertise the 5 new optional params per spec § 5b.
+- [x] `TestTriggerReview_*` (M7a: 6 subtests), `TestGetReview_V4Fields` + listReviews coverage (M7b), `TestRetryReview_*` (M7c: 5 subtests) all pass.
+- [x] Full mcp `npm test` passes: **211/211 across 9 files** at `d5e796e`.
+- [x] `tsc --noEmit` clean.
+- [x] `go build ./services/workdesk/...` clean.
+- [x] Risk register updated (T6-I1 deferred, M7a-I1 promoted to closed-class rule).
+- [x] "Last-known-green" section bumped to `d5e796e` (this commit).
+
+### Fail-hard-and-loud principle (operator preference — applies to Tasks 8-10 + future work)
+
+Prefer loud errors over silent fallbacks. Stated explicitly after M7a/M7b/M7c reviews found multiple cases where silent coercion hid real gaps (idempotency past disabled tenant, listReviews missing v1.4.0 columns, retry returning 500 instead of 404). All were caught by code review; they could have silently degraded the user experience instead.
+
+Concrete rules for the remaining tasks:
+
+1. Invalid input → structured 400 with stable error code + remediation. Never coerce to default and continue.
+2. Missing dependencies → 404 / 400 with provider/field detail. Never run the operation with neutral defaults.
+3. Schema drift → fail the response rather than returning `null`/`false` silently (listReviews in M7b is the negative example).
+4. Redaction failure → transaction rolls back; no un-redacted content on the wire.
+5. Config unreachable for paid operations → fail-closed (spec § 3c). Last-known-good is OK only for observability commands with a visible staleness indicator.
+6. Every fail-closed branch logs with structured fields so ops have a breadcrumb. Silent exits are the anti-pattern.
+
+This rules out generic `try/catch → log.Printf → continue`, defensive `Boolean(possibly_undefined)` coercion, and "best-effort" calls that swallow failures. It does not rule out spec-documented graceful-degradation paths (e.g. `dual_model=false`, the legacy-client compat shim with deprecation marker), which are explicit product decisions with visible operator signals.
+
+Reviewers: flag any new handler that doesn't honor these rules.
+
+### Remaining tasks — dependency map
+
+| Task | Depends on | Affects | Size | Key posture reminder |
+|---|---|---|---|---|
+| **Task 8** — `movp://movp/reviews/<id>/turns` MCP resource | Task 1 (turn table), Task 6 (turn handlers) | Read surface for turn data the rule-suggestion pipeline consumes | Medium | Resource read paths follow § 5g: cross-tenant → 404, not 403. Empty turns → `{turns: []}`, not null. |
+| **Task 9** — OTel spans + metrics | All earlier tasks (instruments them) | Closes `trace_id` and `client_generated_at` TODOs from Task 6 + M7a | Medium-Large | Spans named per § 1c (`review.trigger`, `review.adversary.call`, `review.primary_turn.record`, `review.stop`). Metrics via counter + histogram. Honeycomb dashboards (§ 7e) are ops activity, not code. |
+| **Task 10** — Parity regression + dual-model e2e | All earlier tasks | CI gate for the v1.4.0 release (§ 7b Stage 1) | Large | Regression: `dual_model=false` path preserves v1.3.x contract exactly. E2E: stubbed adversary drives 2-round loop end-to-end, asserts turn table + composite + stop_reason transitions. |
+
+When dispatching Task 8/9/10 subagents, paste this dependency row verbatim at the top of the prompt so the implementer and reviewers share the same integration context.
 
 ---
 
