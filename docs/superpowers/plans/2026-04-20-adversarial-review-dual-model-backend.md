@@ -104,28 +104,28 @@ make test-e2e
 
 ---
 
-## Session checkpoint (Tasks 1–7 complete, as of 2026-04-21)
+## Session checkpoint (Tasks 1–8 complete, as of 2026-04-21)
 
 ### Last-known-green
 
-**Commit:** `d5e796e` on `feature/review-dual-model-v1.4.0-backend` (24 commits ahead of `main`, 43 files, +4771 / −60 lines).
+**Commit:** `37cff0c` on `feature/review-dual-model-v1.4.0-backend` (27 commits ahead of `main`).
 
 Exact commands to re-verify at this SHA:
 
 ```bash
 cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
-git log -1 --format='%H'                                                   # must print d5e796e...
-git rev-list main..HEAD --count                                            # must print 24
+git log -1 --format='%H'                                                   # must print 37cff0c...
+git rev-list main..HEAD --count                                            # must print 27
 
 # Green as of this checkpoint:
 (cd services/workdesk && go build ./...)                                   # 0 errors, silent output
-(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview' -v)
-                                                                           # all subtests PASS (Task 6 + M7a/M7b/M7c coverage)
-(cd services/mcp && npm test)                                              # 211/211 across 9 files
+(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns' -v)
+                                                                           # all subtests PASS (Tasks 5-8 + M7a/M7b/M7c coverage)
+(cd services/mcp && npm test)                                              # 217/217 across 10 files
 (cd services/mcp && npx tsc --noEmit)                                      # 0 errors, silent output
 ```
 
-If any of those drift at commit `d5e796e`, the checkpoint is stale — treat as a regression and bisect before continuing.
+If any of those drift at commit `37cff0c`, the checkpoint is stale — treat as a regression and bisect before continuing.
 
 Pre-existing workdesk failure: `TestAcceptReview_Idempotent` — nil-pointer in `services/common/events/client.go:97`. Confirmed unrelated to this refactor (flagged during Task 5, reconfirmed each round since). Do NOT treat as a regression; leave it for whoever owns the events/client fix.
 
