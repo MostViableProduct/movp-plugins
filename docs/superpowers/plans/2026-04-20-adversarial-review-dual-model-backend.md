@@ -104,6 +104,43 @@ make test-e2e
 
 ---
 
+## Session checkpoint (Tasks 1–6 complete, as of 2026-04-21)
+
+### Last-known-green
+
+Commit: `28f9de2` on `feature/review-dual-model-v1.4.0-backend` (15 commits ahead of `main`).
+
+```bash
+cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
+
+# Green as of the checkpoint:
+(cd services/workdesk && go build ./...)                                    # 0 errors
+(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums' -v)
+                                                                            # all subtests PASS
+(cd services/mcp && npm test)                                               # 195/195 across 9 files
+(cd services/mcp && npx tsc --noEmit)                                       # 0 errors
+```
+
+Pre-existing workdesk failure: `TestAcceptReview_Idempotent` — nil-pointer in `services/common/events/client.go:97`. Confirmed unrelated to this refactor (flagged during Task 5, reconfirmed each round since). Do NOT treat as a regression; leave it for whoever owns the events/client fix.
+
+### Deferred risk register
+
+| ID | Item | Condition | Why acceptable now | Trigger to revisit |
+|---|---|---|---|---|
+| T6-I1 | TOCTOU between `postReviewTurn`'s preflight tenant SELECT and `InsertTurn`'s tenant SELECT | Two separate DB reads with no row lock between them | `tenant_id` on `adversarial_reviews` is immutable by convention (no code path in workdesk writes to that column), so the window can only surface as "row deleted mid-request" — which is already mapped to 404 via `ErrReviewNotFound`. Narrow, benign. | If a future migration or service starts writing `adversarial_reviews.tenant_id` after insert, collapse the two reads into a single tenant-validating query inside `InsertTurn` (`SELECT tenant_id WHERE id=$1 AND tenant_id=$2`). Also revisit if cross-tenant leak canary (§ 7e) fires. |
+
+### Task 7 pre-split guidance
+
+Task 7 extends three MCP tools. Implement them as **three internal milestones** (commit or subagent boundary, your choice) even if the final release bundles them:
+
+1. **M7a — `trigger_review` extension.** Accept `client_tool`, `idempotency_key`, `force_refresh`, `parent_review_id`, `prior_rationale`. Pair-validation + credential-catalog gate. Pins `config_revision` + `effective_threshold` onto the review row.
+2. **M7b — `get_review_status` extension.** Response gains `round`, `client_tool`, `dual_model`, `adversary_model_id`, `composite_score`, `effective_threshold`, `stop_reason`, `redactions_summary`, 7th category. Preserves v1.3.x `parsing_text` verbatim. Deprecation marker on argument-less call.
+3. **M7c — `resolve_review` tightening.** `retry` only when `status=error`.
+
+Each milestone should produce its own PR-sized commit or subagent dispatch so review findings land locally and don't mix concerns across the three tool surfaces.
+
+---
+
 ## Task 1: DDL — add columns to `adversarial_reviews` + create `adversarial_review_turns`
 
 **Files:**
