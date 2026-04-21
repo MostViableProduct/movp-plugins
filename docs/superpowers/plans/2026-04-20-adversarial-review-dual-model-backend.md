@@ -104,28 +104,82 @@ make test-e2e
 
 ---
 
-## Session checkpoint (Tasks 1–9 complete, as of 2026-04-21)
+## Session checkpoint (ALL 10 Tasks COMPLETE, as of 2026-04-21)
 
 ### Last-known-green
 
-**Commit:** `93f0227` on `feature/review-dual-model-v1.4.0-backend` (29 commits ahead of `main`).
+**Commit:** `545f232` on `feature/review-dual-model-v1.4.0-backend`.
+
+**Exact diff stats vs `main`:** `52 files changed, +7525 / −115 lines` (via `git diff --shortstat main`).
 
 Exact commands to re-verify at this SHA:
 
 ```bash
 cd /Users/ensell/Code/big-wave/.worktrees/review-dual-model-backend
-git log -1 --format='%H'                                                   # must print 93f0227...
-git rev-list main..HEAD --count                                            # must print 29
+git log -1 --format='%H'                                                   # must print 545f232...
+git rev-list main..HEAD --count                                            # must print 31
+git diff --shortstat main                                                  # must print 52 files changed, 7525 insertions(+), 115 deletions(-)
 
 # Green as of this checkpoint:
 (cd services/workdesk && go build ./...)                                   # 0 errors, silent output
-(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns|^TestReviewAttributes|^TestAdversaryProvider|^TestRecordReviewStop|^TestRecordRedactions' -v)
-                                                                           # all subtests PASS (Tasks 5-9 + M7a/M7b/M7c coverage)
+
+# Spot CI (Task-1-through-10 coverage regex):
+(cd services/workdesk && go test -run '^TestInsertTurn|^TestPostReviewTurn|^TestComposite|^TestEffectiveThreshold|^TestWeightsForMode|^TestWeightSums|^TestTriggerReview|^TestGetReview_V4Fields|^TestRetryReview|^TestListTurns|^TestReviewAttributes|^TestAdversaryProvider|^TestRecordReviewStop|^TestRecordRedactions|^TestDualModelParity|^TestDualModelE2E' -v)
+                                                                           # all subtests PASS (every task in this plan)
+
+# Full workdesk CI (the command CI runs for release):
+(cd services/workdesk && go test ./... -count=1)
+                                                                           # PASS except TestAcceptReview_Idempotent (pre-existing global-state
+                                                                           # leak from TestIntegration_FullWorkdesk — documented throughout
+                                                                           # this plan, root-caused to nil natsClient when alphabetical test
+                                                                           # ordering puts Accept_ before Integration_. NOT a Task 1–10
+                                                                           # regression. Owner outside this branch — see Temporal-worker-
+                                                                           # boundary non-goals section.)
+
 (cd services/mcp && npm test)                                              # 220/220 across 11 files
 (cd services/mcp && npx tsc --noEmit)                                      # 0 errors, silent output
 ```
 
-If any of those drift at commit `93f0227`, the checkpoint is stale — treat as a regression and bisect before continuing.
+If any of those drift at commit `545f232` (other than the documented `TestAcceptReview_Idempotent` flake), the checkpoint is stale — treat as a regression and bisect before continuing.
+
+### Release readiness checklist (for the v1.4.0 backend PR)
+
+PR body should include:
+
+1. **Rollback path:** single tenant config flag (`review.dual_model=false`) reverts behavior to v1.3.2 for that tenant. Whole-release rollback = revert this PR's commits (dependency-ordered — DDL migrations are additive and safe to keep even after revert).
+2. **Risk focus for review:** (a) dual-model cost multiplier (2× adversary calls per round vs v1.3.2); (b) fail-hard-and-loud behavioral changes in retry / resolve / include_content paths; (c) new MCP resource surface (movp://movp/reviews/<id>/turns).
+3. **v1.4.1 tracking:** link the Temporal-worker-boundary non-goals issue (see "Temporal-worker-boundary non-goals for v1.4.0" section earlier in this plan). Required for full `review.adversary.call` + `review.stop` emission + production `recordReviewStop` wiring.
+4. **Metrics-to-watch post-deploy:** `review.rounds_total`, `review.round_duration_seconds`, `review.redactions_total` — all emitted but unwired at terminal paths until v1.4.1 Temporal-worker PR lands. Dashboards should note this or mark these as "coming online v1.4.1" to avoid false-negative alerting.
+
+### Post-merge smoke checklist (staging tenant)
+
+After deploying the v1.4.0 backend to staging, run this through a staging tenant configured with `dual_model=true` + valid provider credentials:
+
+```bash
+# 1) trigger_review with client_tool — should succeed with v1.4.0 fields
+MOVP_API_KEY=<staging-admin-key> curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"artifact_type":"code_output","content":"<tiny artifact>","client_tool":"claude-code"}' \
+  https://<staging-host>/reviews/trigger
+# Expect 202 with {review_id, status: "queued"}.
+
+# 2) get_review_status on that id — wait for completion, check structured block
+# (via MCP client; direct HTTP also works — body includes the v1.4.0 structured JSON fence)
+
+# 3) record_primary_turn on that id — POST /reviews/<id>/turns with a minimal rationale
+# Expect 200 with redactions rollup.
+
+# 4) List turns via movp://movp/reviews/<id>/turns — confirm the turn is visible
+# Expect 200 with {turns:[...], total_cost_usd:>0, cursor:null}.
+
+# 5) Attempt retry on the completed review — MUST return 400 retry_on_completed_review
+# (spec § 5d tightened rule).
+
+# 6) Attempt cross-tenant access with a different tenant's key — MUST return 404
+# (spec § 5g no-leak).
+```
+
+Any deviation from the expected outcomes is a release-blocker. Bounce staging if needed to collect fresh state.
 
 Pre-existing workdesk failure: `TestAcceptReview_Idempotent` — nil-pointer in `services/common/events/client.go:97`. Confirmed unrelated to this refactor (flagged during Task 5, reconfirmed each round since). Do NOT treat as a regression; leave it for whoever owns the events/client fix.
 
@@ -192,15 +246,15 @@ This rules out generic `try/catch → log.Printf → continue`, defensive `Boole
 
 Reviewers: flag any new handler that doesn't honor these rules.
 
-### Remaining tasks — dependency map
+### Task completion map
 
-| Task | Depends on | Affects | Size | Key posture reminder | Status |
-|---|---|---|---|---|---|
-| Task 8 — `movp://movp/reviews/<id>/turns` MCP resource | Task 1 (turn table), Task 6 (turn handlers) | Read surface for turn data the rule-suggestion pipeline consumes | Medium | Resource read paths follow § 5g: cross-tenant → 404, not 403. Empty turns → `{turns: []}`, not null. | ✅ `37cff0c` |
-| Task 9 — OTel spans + metrics | All earlier tasks (instruments them) | Closes `trace_id` and `client_generated_at` TODOs from Task 6 + M7a | Medium-Large | Spans named per § 1c (`review.trigger`, `review.adversary.call`, `review.primary_turn.record`, `review.stop`). Metrics via counter + histogram. Honeycomb dashboards (§ 7e) are ops activity, not code. | ✅ `93f0227` |
-| **Task 10** — Parity regression + dual-model e2e | All earlier tasks | CI gate for the v1.4.0 release (§ 7b Stage 1) | Large | Regression: `dual_model=false` path preserves v1.3.x contract exactly. E2E: stubbed adversary drives 2-round loop end-to-end, asserts turn table + composite + stop_reason transitions. | ⏳ next |
+| Task | Depends on | Affects | Key posture | Status |
+|---|---|---|---|---|
+| Task 8 — `movp://movp/reviews/<id>/turns` MCP resource | Task 1 + Task 6 | Read surface for rule-suggestion pipeline | § 5g no-leak; empty ≠ missing | ✅ `37cff0c` |
+| Task 9 — OTel spans + metrics | All earlier tasks | Closes `trace_id` + `client_generated_at` TODOs | § 1c span names; metric labels bounded | ✅ `93f0227` |
+| Task 10 — Parity regression + dual-model e2e | All earlier tasks | CI gate for v1.4.0 release (§ 7b Stage 1) | v1.3.2 parity + 2-round e2e + metric cardinality | ✅ `545f232` |
 
-When dispatching a Task 10 subagent, paste this dependency row verbatim at the top of the prompt so the implementer and reviewers share the same integration context.
+All 10 tasks complete. Plan's "Next step after this plan completes" section governs the follow-up work (Frontend plan + Plugins plan).
 
 ### Temporal-worker-boundary non-goals for v1.4.0
 
