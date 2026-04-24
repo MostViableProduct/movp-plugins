@@ -45,3 +45,21 @@ jobs:
       - name: Run MCP smoke test
         working-directory: scripts/mcp-smoke
         run: npm test
+
+  parse-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install parse-test harness
+        working-directory: scripts/parse-tests
+        run: npm install --no-audit --no-fund
+      - name: Run property tests
+        working-directory: scripts/parse-tests
+        run: npm test
+      - name: Verify SKILL.md regex sync
+        working-directory: scripts/parse-tests
+        run: npm run check-sync

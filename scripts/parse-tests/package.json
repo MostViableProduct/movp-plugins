@@ -1,0 +1,13 @@
+{
+  "name": "movp-parse-tests",
+  "private": true,
+  "type": "module",
+  "description": "Canonical parser for get_review_status output + property-based tests. Authoritative over all three SKILL.md files.",
+  "scripts": {
+    "test": "node --test parser.test.mjs",
+    "check-sync": "node check-skill-sync.mjs"
+  },
+  "devDependencies": {
+    "fast-check": "^3.23.2"
+  }
+}

@@ -144,6 +144,8 @@ To disable: /movp:auto-review off    |    Status: /movp:status
 
 Both this skill and `/movp:review` parse `get_review_status` output using the following spec. Do not inline regex elsewhere.
 
+> **Implementer note:** The canonical source of truth for these regex strings is `scripts/parse-tests/parser.mjs` in the repo root. `scripts/parse-tests/check-skill-sync.mjs` enforces byte-equality between the regex constants exported there and the strings quoted below on every CI run. If you need to change a regex, edit both sides in the same PR.
+
 - **Source:** the text body returned by `get_review_status(review_id=<id>)` when `review_status == "completed"`.
 - **Score:** regex `Quality:\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*10` → capture as float.
 - **Cost:** regex `Cost:\s*\$([0-9]+(?:\.[0-9]+)?)` → capture as float.

@@ -19,3 +19,6 @@ package/
 
 # scripts/mcp-smoke node_modules (installed by npm ci in CI; lockfile is committed)
 scripts/mcp-smoke/node_modules/
+
+# scripts/parse-tests node_modules (installed by npm install in CI; lockfile is committed)
+scripts/parse-tests/node_modules/
